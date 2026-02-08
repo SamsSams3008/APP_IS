@@ -6,6 +6,8 @@ import '../widgets/stat_card.dart';
 import '../utils/formatters.dart';
 import '../models/dashboard_stats.dart';
 import '../charts/revenue_chart.dart';
+import '../sections/stats_section.dart';
+import '../models/dashboard_filters.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -19,12 +21,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   late Future<DashboardStats> future;
   late List<FlSpot> revenueChartData;
+  late DashboardFilters filters;
 
   @override
   void initState() {
     super.initState();
-    future = service.fetchDashboardData();
-
+    filters = DashboardFilters.last7Days();
+    future = service.fetchDashboardData(filters);
     final points = service.getRevenueChartData();
     revenueChartData = points
         .map((p) => FlSpot(p.day.toDouble(), p.value))
@@ -33,7 +36,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> refresh() async {
     setState(() {
-      future = service.fetchDashboardData();
+      future = service.fetchDashboardData(filters);
 
       final points = service.getRevenueChartData();
       revenueChartData = points
@@ -64,25 +67,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                StatCard(
-                  title: 'Revenue',
-                  value: formatMoney(data.revenue),
-                ),
-                const SizedBox(height: 12),
-                StatCard(
-                  title: 'Impressions',
-                  value: data.impressions.toString(),
-                ),
-                const SizedBox(height: 12),
-                StatCard(
-                  title: 'eCPM',
-                  value: formatMoney(data.ecpm),
-                ),
+                StatsSection(data: data),   // ← aquí viven tus 3 stats (o 10 después)
                 const SizedBox(height: 24),
-                RevenueChart(
-                  spots: revenueChartData,
-                ),
-              ],
+                RevenueChart(spots: revenueChartData),
+              ]
             );
           },
         ),

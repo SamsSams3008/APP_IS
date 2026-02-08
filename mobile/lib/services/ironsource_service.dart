@@ -1,8 +1,11 @@
 import '../models/dashboard_stats.dart';
 import '../models/revenue_point.dart';
+import '../models/dashboard_filters.dart';
 
 class IronSourceService {
-  Future<DashboardStats> fetchDashboardData() async {
+  Future<DashboardStats> fetchDashboardData(
+    DashboardFilters filters,
+  ) async {
     await Future.delayed(const Duration(seconds: 1));
 
     return DashboardStats(
