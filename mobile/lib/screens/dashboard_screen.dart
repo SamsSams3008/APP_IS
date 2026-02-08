@@ -3,6 +3,7 @@ import '../services/ironsource_service.dart';
 import '../widgets/stat_card.dart';
 import '../utils/formatters.dart';
 import '../charts/revenue_chart.dart';
+import '../models/dashboard_stats.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -13,7 +14,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final service = IronSourceService();
-  late Future<Map<String, dynamic>> future;
+  late Future<DashboardStats> future;
 
   @override
   void initState() {
@@ -44,24 +45,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
               return const Center(child: Text('Error loading data'));
             }
 
-            final data = snapshot.data as Map<String, dynamic>;
+            final data = snapshot.data as DashboardStats;
 
             return ListView(
               padding: const EdgeInsets.all(16),
              children: [
                 StatCard(
                   title: 'Revenue',
-                  value: formatMoney(data['revenue']),
+                  value: formatMoney(data.revenue),
                 ),
                 const SizedBox(height: 12),
                 StatCard(
                   title: 'Impressions',
-                  value: data['impressions'].toString(),
+                  value: data.impressions.toString(),
                 ),
                 const SizedBox(height: 12),
                 StatCard(
                   title: 'eCPM',
-                  value: formatMoney(data['ecpm']),
+                  value: formatMoney(data.ecpm),
                 ),
                 const SizedBox(height: 24),
                 const RevenueChart(),
