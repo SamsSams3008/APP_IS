@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+
 import '../services/ironsource_service.dart';
 import '../widgets/stat_card.dart';
 import '../utils/formatters.dart';
-import '../charts/revenue_chart.dart';
 import '../models/dashboard_stats.dart';
+import '../charts/revenue_chart.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -13,18 +15,30 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final service = IronSourceService();
+  final IronSourceService service = IronSourceService();
+
   late Future<DashboardStats> future;
+  late List<FlSpot> revenueChartData;
 
   @override
   void initState() {
     super.initState();
     future = service.fetchDashboardData();
+
+    final points = service.getRevenueChartData();
+    revenueChartData = points
+        .map((p) => FlSpot(p.day.toDouble(), p.value))
+        .toList();
   }
 
   Future<void> refresh() async {
     setState(() {
       future = service.fetchDashboardData();
+
+      final points = service.getRevenueChartData();
+      revenueChartData = points
+          .map((p) => FlSpot(p.day.toDouble(), p.value))
+          .toList();
     });
   }
 
@@ -34,7 +48,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       appBar: AppBar(title: const Text('Dashboard')),
       body: RefreshIndicator(
         onRefresh: refresh,
-        child: FutureBuilder(
+        child: FutureBuilder<DashboardStats>(
           future: future,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
@@ -45,11 +59,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               return const Center(child: Text('Error loading data'));
             }
 
-            final data = snapshot.data as DashboardStats;
+            final data = snapshot.data!;
 
             return ListView(
               padding: const EdgeInsets.all(16),
-             children: [
+              children: [
                 StatCard(
                   title: 'Revenue',
                   value: formatMoney(data.revenue),
@@ -65,7 +79,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   value: formatMoney(data.ecpm),
                 ),
                 const SizedBox(height: 24),
-                const RevenueChart(),
+                RevenueChart(
+                  spots: revenueChartData,
+                ),
               ],
             );
           },
