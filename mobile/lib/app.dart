@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'screens/dashboard_screen.dart';
+import 'routes.dart';
 
 class App extends StatelessWidget {
   const App({super.key});
@@ -9,11 +9,8 @@ class App extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'APP_IS',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.blue,
-      ),
-      home: const DashboardScreen(),
+      routes: AppRoutes.routes,
+      initialRoute: '/',
     );
   }
 }
