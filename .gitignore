@@ -1,0 +1,12 @@
+# Flutter
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Node
+node_modules/
+.env
+
+# Mac
+.DS_Store
