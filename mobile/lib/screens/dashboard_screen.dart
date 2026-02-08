@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/ironsource_service.dart';
 import '../widgets/stat_card.dart';
 import '../utils/formatters.dart';
+import '../charts/revenue_chart.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -47,19 +48,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
             return ListView(
               padding: const EdgeInsets.all(16),
-              children: [
+             children: [
                 StatCard(
                   title: 'Revenue',
                   value: formatMoney(data['revenue']),
                 ),
+                const SizedBox(height: 12),
                 StatCard(
                   title: 'Impressions',
                   value: data['impressions'].toString(),
                 ),
+                const SizedBox(height: 12),
                 StatCard(
                   title: 'eCPM',
                   value: formatMoney(data['ecpm']),
                 ),
+                const SizedBox(height: 24),
+                const RevenueChart(),
               ],
             );
           },
