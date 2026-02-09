@@ -11,10 +11,11 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
 
-  # Auth & backend
+  # Auth + backend (Firestore para credenciales; Cloud Functions para stats)
   firebase_core: ^3.8.1
   firebase_auth: ^5.3.4
   cloud_firestore: ^5.5.2
+  cloud_functions: ^5.2.0
 
   # Routing
   go_router: ^14.6.3

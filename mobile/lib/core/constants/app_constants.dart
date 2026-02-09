@@ -14,11 +14,11 @@ class AppConstants {
   static const int ironsourceRateLimitRequests = 20;
   static const Duration ironsourceRateLimitWindow = Duration(minutes: 10);
 
-  /// Secure storage keys
+  /// Secure storage keys (copia local)
   static const String storageIronsourceEmail = 'ironsource_email';
   static const String storageIronsourceSecret = 'ironsource_secret';
 
-  /// Firestore
+  /// Firestore (credenciales para el cron del backend)
   static const String collectionUsers = 'users';
   static const String fieldIronsourceEmail = 'ironsourceEmail';
   static const String fieldIronsourceSecret = 'ironsourceSecret';

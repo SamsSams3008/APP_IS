@@ -1,0 +1,7 @@
+#!/bin/bash
+# Wrapper para forzar clone superficial (--depth 1) y evitar que BoringSSL se cuelgue
+if [ "$1" = "clone" ]; then
+  shift
+  exec /usr/bin/git clone --depth 1 "$@"
+fi
+exec /usr/bin/git "$@"

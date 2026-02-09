@@ -1,98 +1,104 @@
 # IronSource Dashboard
 
-App móvil en Flutter (Android e iOS) para ver estadísticas de monetización de IronSource. Inicio de sesión, configuración de claves de la Reporting API, dashboard con gráficas, tablas y filtros por fecha, app, plataforma y tipo de anuncio.
+App móvil en Flutter (Android e iOS) para ver estadísticas de monetización de IronSource: mismo tipo de métricas que el dashboard oficial, en app móvil y con vista resumida. Los datos se sincronizan en segundo plano y están siempre disponibles.
+
+## Arquitectura (seria, con backend)
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
+│  App Flutter│────▶│ Cloud Functions  │────▶│  IronSource │
+│  (móvil)   │     │ (cron + getStats) │     │  Reporting  │
+└─────────────┘     └────────┬─────────┘     └─────────────┘
+       │                     │
+       │                     ▼
+       │             ┌──────────────┐
+       └─────────────▶│  Firestore    │
+         (Auth +     │ users/        │  ← credenciales por usuario
+          getStats)  │ userStats/    │  ← estadísticas por usuario/día
+                     └──────────────┘
+```
+
+- **Cron (cada 6 horas)**: una Cloud Function se ejecuta automáticamente, lee las credenciales IronSource de cada usuario desde Firestore, llama a la API de IronSource y guarda los datos en `userStats/{userId}/days/{fecha}`.
+- **La app** ya no llama a IronSource directamente: pide los datos al backend con `getStats` (y opcionalmente dispara una sincronización con `requestSync`). Los usuarios siempre ven datos desde nuestra base, sin depender del límite de la API en tiempo real.
+- **Firestore**: guarda credenciales por usuario (para el cron) y las estadísticas ya extraídas (para que la app las consulte cuando quiera).
 
 ## Estructura del proyecto
 
 ```
-lib/
-├── main.dart                 # Entrada, inicialización Firebase y Provider
-├── app.dart                  # MaterialApp y router
-├── core/
-│   ├── constants/            # Constantes (URLs API, nombres)
-│   ├── theme/                # Tema de la app
-│   └── router/               # go_router y redirección por auth
-├── data/
-│   ├── credentials/          # Repositorio de claves IronSource (Firestore + secure storage)
-│   └── ironsource/           # Cliente HTTP de la API IronSource (stats, aplicaciones)
-├── features/
-│   ├── auth/                 # Login, registro, AuthState (Firebase Auth)
-│   ├── credentials/          # Pantalla para guardar email + Secret Key IronSource
-│   ├── dashboard/             # Filtros, estadísticas, gráficas, tabla
-│   │   ├── domain/           # DashboardFilters, DashboardStats
-│   │   ├── data/             # DashboardRepository
-│   │   └── presentation/     # DashboardScreen
-│   └── splash/               # Splash y resolución de ruta inicial
-└── shared/
-    ├── utils/                # Formateo (dinero, números, fechas)
-    └── widgets/              # StatCard y componentes reutilizables
+APP_IS/
+├── mobile/                 # App Flutter
+│   └── lib/
+│       ├── data/
+│       │   ├── backend/    # BackendStatsRepository (getStats, requestSync, getApplications)
+│       │   ├── credentials/# CredentialsRepository (Firestore + secure storage)
+│       │   └── ironsource/ # (solo por si se necesita en el futuro)
+│       └── features/       # auth, credentials, dashboard, splash
+├── functions/              # Firebase Cloud Functions (Node 20)
+│   ├── index.js            # syncIronsourceStats (cron), getStats, requestSync, getApplications
+│   └── package.json
+├── firebase.json
+└── firestore.rules
 ```
 
 ## Configuración
 
-### 1. Flutter
+### 1. Flutter (mobile)
 
 - Flutter SDK estable (ej. 3.22+).
-- `flutter pub get` en la carpeta `mobile/`.
+- `cd mobile && flutter pub get`.
 
 ### 2. Firebase
 
 1. Crea un proyecto en [Firebase Console](https://console.firebase.google.com).
-2. Activa **Authentication** (método Email/Password).
+2. Activa **Authentication** (Email/Password).
 3. Crea una base de datos **Firestore**.
-4. En el proyecto Flutter:
-   - Instala la CLI de FlutterFire: `dart pub global activate flutterfire_cli`
-   - Ejecuta `flutterfire configure` en `mobile/` para generar la configuración por plataforma.
-   - O añade manualmente:
-     - **Android**: `android/app/google-services.json`
-     - **iOS**: `ios/Runner/GoogleService-Info.plist`
+4. En la raíz del repo (`APP_IS/`):
+   - `firebase login`
+   - `firebase use <tu-project-id>`
+   - Instala dependencias de functions: `cd functions && npm install`
+   - Despliega functions: `firebase deploy --only functions`
+   - Despliega reglas: `firebase deploy --only firestore:rules`
+5. En la app Flutter (`mobile/`):
+   - `flutterfire configure` (o añade a mano `google-services.json` y `GoogleService-Info.plist`).
 
 ### 3. Reglas de Firestore
 
-En Firestore > Reglas, usa algo como:
+El archivo `firestore.rules` en la raíz ya define:
 
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-  }
-}
-```
-
-Así cada usuario solo puede leer/escribir su propio documento (donde se guardan las claves IronSource).
+- `users/{userId}`: solo el usuario autenticado puede leer/escribir (ahí se guardan las claves IronSource).
+- `userStats/{userId}/...`: solo lectura para ese usuario; la escritura la hace solo el backend (Cloud Functions).
 
 ### 4. Claves IronSource
 
-Cada usuario debe configurar sus credenciales de la **Reporting API** de IronSource:
-
-- **Email**: el mismo con el que entras en IronSource.
-- **Secret Key**: en IronSource → Mi cuenta → Reporting API.
-
-Esas credenciales se guardan en el dispositivo (almacenamiento seguro) y, si hay sesión Firebase, también en Firestore para sincronizar entre dispositivos.
+Cada usuario, en la app, introduce su **email** y **Secret Key** de la Reporting API de IronSource (Mi cuenta → Reporting API). Esas credenciales se guardan en Firestore (para que el cron las use) y también en el dispositivo.
 
 ## Cómo ejecutar
 
 ```bash
+# Backend (una vez, o al cambiar functions)
+cd functions && npm install && cd ..
+firebase deploy --only functions
+
+# App
 cd mobile
 flutter pub get
 flutter run
 ```
 
-Para Android: `flutter run -d android`  
-Para iOS: `flutter run -d ios`
-
 ## Funcionalidad
 
-- **Auth**: registro e inicio de sesión con email y contraseña (Firebase Auth).
-- **Claves**: pantalla de configuración para guardar email y Secret Key de IronSource.
-- **Dashboard**:
-  - Rango de fechas: Hoy, Ayer, 7 / 30 / 90 días, o rango personalizado.
-  - Tarjetas de resumen: ingresos, impresiones, eCPM, clicks, completados.
+- **Auth**: registro e inicio de sesión (Firebase Auth).
+- **Claves**: pantalla para guardar email y Secret Key de IronSource; se almacenan en Firestore y en el dispositivo.
+- **Dashboard** (datos desde nuestro backend, no directamente de IronSource):
+  - Rango de fechas: Hoy, Ayer, 7 / 30 / 90 días, personalizado.
+  - Tarjetas: ingresos, impresiones, eCPM, clicks, completados.
   - Gráfica de ingresos por fecha.
-  - Filtros: por app, tipo de anuncio (rewarded, interstitial, banner, offerwall), plataforma (Android/iOS).
-  - Tabla con datos detallados por fecha, ad unit, plataforma, país, ingresos, impresiones, eCPM.
+  - Filtros: por app, tipo de anuncio, plataforma (todo aplicado en memoria sobre datos ya cargados).
+  - Tabla detallada por fecha, ad unit, plataforma, país.
+- **Sincronización**: el cron actualiza datos cada 6 horas; al abrir la app o al pulsar "Actualizar" se puede forzar una sincronización inmediata (`requestSync`) y luego se muestran los datos con `getStats`.
 
-La API de IronSource tiene un límite de **20 peticiones cada 10 minutos**; los filtros y el pull-to-refresh consumen peticiones.
+## Coste aproximado
+
+- Firebase Auth: uso gratuito habitual.
+- Firestore: lecturas/escrituras según uso; el cron escribe por usuario y por día.
+- Cloud Functions: invocaciones del cron (cada 6 h) + llamadas a `getStats` / `requestSync` / `getApplications`. Plan Blaze para poder usar el cron y llamadas a APIs externas (IronSource).

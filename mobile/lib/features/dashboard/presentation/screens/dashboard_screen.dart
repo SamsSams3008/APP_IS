@@ -4,12 +4,11 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/constants/app_constants.dart';
+import '../../../../data/backend/backend_stats_repository.dart';
 import '../../../../data/credentials/credentials_repository.dart';
 import '../../../../shared/utils/formatters.dart';
 import '../../../../shared/widgets/stat_card.dart';
 import '../../../auth/presentation/auth_state.dart';
-import '../../../../data/ironsource/ironsource_api_client.dart';
-import '../../data/dashboard_repository.dart';
 import '../../domain/dashboard_filters.dart';
 import '../../domain/dashboard_stats.dart';
 
@@ -21,15 +20,20 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final DashboardRepository _repo = DashboardRepository();
+  final BackendStatsRepository _backend = BackendStatsRepository();
   final CredentialsRepository _credentials = CredentialsRepository();
 
   DashboardFilters _filters = DashboardFilters.last7Days();
   DashboardStats? _stats;
-  List<IronSourceStatsRow> _rawRows = [];
-  List<IronSourceApp> _apps = [];
+  List<BackendStatsRow> _rawRows = [];
+  List<BackendApp> _apps = [];
   bool _loading = true;
   String? _error;
+
+  // Cache: datos del backend por rango de fechas; filtros se aplican en memoria
+  List<BackendStatsRow> _cachedRawRows = [];
+  String? _cachedStartDate;
+  String? _cachedEndDate;
 
   @override
   void initState() {
@@ -47,25 +51,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _load();
   }
 
+  bool get _isCacheValid =>
+      _cachedStartDate == _filters.startDateStr &&
+      _cachedEndDate == _filters.endDateStr &&
+      _cachedRawRows.isNotEmpty;
+
+  /// Filtra en memoria los datos cacheados según app, ad unit, país, plataforma.
+  void _applyFiltersFromCache() {
+    if (_cachedRawRows.isEmpty) return;
+    final filtered = _cachedRawRows.where((row) {
+      if (_filters.appKey != null && row.appKey != _filters.appKey) return false;
+      if (_filters.adUnits != null && !_adUnitMatches(row.adUnits, _filters.adUnits!)) return false;
+      if (_filters.country != null && row.country != _filters.country) return false;
+      if (_filters.platform != null && row.platform != _filters.platform) return false;
+      return true;
+    }).toList();
+    _rawRows = filtered;
+    _stats = BackendStatsRepository.statsFromRows(filtered);
+    setState(() {});
+  }
+
+  bool _adUnitMatches(String? rowAdUnit, String filterAdUnit) {
+    if (rowAdUnit == null) return false;
+    // La API puede devolver "Rewarded Video"; el filtro usa "rewardedVideo"
+    final normalized = rowAdUnit.toLowerCase().replaceAll(' ', '');
+    final f = filterAdUnit.toLowerCase();
+    return normalized.contains(f) || f.contains(normalized) ||
+        (filterAdUnit == 'rewardedVideo' && normalized.contains('rewarded'));
+  }
+
   Future<void> _load() async {
+    if (_isCacheValid) {
+      _applyFiltersFromCache();
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final stats = await _repo.getStats(_filters);
-      final raw = await _repo.getStatsRaw(_filters);
-      List<IronSourceApp> apps = [];
-      try {
-        apps = await _repo.getApplications();
-      } catch (_) {}
+      await _backend.requestSync();
+      final result = await _backend.getStats(
+        startDate: _filters.startDateStr,
+        endDate: _filters.endDateStr,
+      );
+      if (_apps.isEmpty) {
+        try {
+          _apps = await _backend.getApplications();
+        } catch (_) {}
+      }
       if (!mounted) return;
-      setState(() {
-        _stats = stats;
-        _rawRows = raw;
-        _apps = apps;
-        _loading = false;
-      });
+      _cachedRawRows = result.tableRows;
+      _cachedStartDate = _filters.startDateStr;
+      _cachedEndDate = _filters.endDateStr;
+      _applyFiltersFromCache();
+      setState(() => _loading = false);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -157,7 +197,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: () {
+          _cachedRawRows = [];
+          _cachedStartDate = null;
+          _cachedEndDate = null;
+          return _load();
+        },
         child: _loading && _stats == null
             ? const Center(child: CircularProgressIndicator())
             : _error != null && _stats == null
@@ -269,10 +314,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final byDate = <String, double>{};
     for (final row in _rawRows) {
       final date = row.date ?? '';
-      for (final d in row.data ?? []) {
-        final r = (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0.0;
-        byDate[date] = (byDate[date] ?? 0) + r;
-      }
+      byDate[date] = (byDate[date] ?? 0) + row.revenue;
     }
     final entries = byDate.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
     if (entries.isEmpty) {
@@ -376,14 +418,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 items: [
                   const DropdownMenuItem(value: null, child: Text('Todas')),
-                  ..._apps.map((a) => DropdownMenuItem(
+                  ..._apps.map((a) => DropdownMenuItem<String>(
                         value: a.appKey,
                         child: Text('${a.appName ?? a.appKey} (${a.platform ?? ''})'),
                       )),
                 ],
                 onChanged: (v) {
                   setState(() => _filters = _filters.copyWith(appKey: v));
-                  _load();
+                  _applyFiltersFromCache();
                 },
               ),
               const SizedBox(height: 12),
@@ -403,7 +445,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
               onChanged: (v) {
                 setState(() => _filters = _filters.copyWith(adUnits: v));
-                _load();
+                _applyFiltersFromCache();
               },
             ),
             const SizedBox(height: 12),
@@ -420,7 +462,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
               onChanged: (v) {
                 setState(() => _filters = _filters.copyWith(platform: v));
-                _load();
+                _applyFiltersFromCache();
               },
             ),
           ],
@@ -440,17 +482,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     final rows = <List<String>>[];
     for (final row in _rawRows) {
-      for (final d in row.data ?? []) {
-        rows.add([
-          row.date ?? '-',
-          row.adUnits ?? '-',
-          row.platform ?? '-',
-          row.country ?? '-',
-          formatMoney((d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0),
-          ((d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0).toString(),
-          formatMoney((d['eCPM'] is num) ? (d['eCPM'] as num).toDouble() : 0),
-        ]);
-      }
+      rows.add([
+        row.date ?? '-',
+        row.adUnits ?? '-',
+        row.platform ?? '-',
+        row.country ?? '-',
+        formatMoney(row.revenue),
+        row.impressions.toString(),
+        formatMoney(row.eCPM),
+      ]);
     }
     return Card(
       child: Padding(
