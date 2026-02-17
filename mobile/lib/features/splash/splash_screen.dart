@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 
-import '../auth/presentation/auth_state.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../data/credentials/credentials_repository.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -20,13 +19,12 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _resolveRoute() async {
-    final auth = context.read<AuthState>();
-    await auth.initialize();
+    final hasCredentials = await CredentialsRepository().hasCredentials();
     if (!mounted) return;
-    if (auth.isLoggedIn) {
+    if (hasCredentials) {
       context.go('/dashboard');
     } else {
-      context.go('/login');
+      context.go('/credentials');
     }
   }
 
@@ -37,7 +35,11 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.analytics_outlined, size: 72, color: Theme.of(context).colorScheme.primary),
+            Icon(
+              Icons.analytics_outlined,
+              size: 72,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             const SizedBox(height: 24),
             Text(
               AppConstants.appName,

@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 
-import '../../../auth/presentation/auth_state.dart';
 import '../../../../data/credentials/credentials_repository.dart';
 
 class CredentialsScreen extends StatefulWidget {
@@ -14,9 +12,10 @@ class CredentialsScreen extends StatefulWidget {
 
 class _CredentialsScreenState extends State<CredentialsScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController();
-  final _secretController = TextEditingController();
+  final _secretKeyController = TextEditingController();
+  final _refreshTokenController = TextEditingController();
   bool _obscureSecret = true;
+  bool _obscureRefresh = true;
   bool _loading = false;
   String? _errorMessage;
 
@@ -32,15 +31,15 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
   Future<void> _loadStored() async {
     final c = await _repo.getCredentials();
     if (c != null && mounted) {
-      _emailController.text = c.email;
-      _secretController.text = c.secretKey;
+      _secretKeyController.text = c.secretKey;
+      _refreshTokenController.text = c.refreshToken;
     }
   }
 
   @override
   void dispose() {
-    _emailController.dispose();
-    _secretController.dispose();
+    _secretKeyController.dispose();
+    _refreshTokenController.dispose();
     super.dispose();
   }
 
@@ -55,8 +54,8 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
     }
     try {
       await _repo.saveCredentials(
-        _emailController.text.trim(),
-        _secretController.text,
+        _secretKeyController.text.trim(),
+        _refreshTokenController.text.trim(),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -74,18 +73,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Claves IronSource'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await context.read<AuthState>().signOut();
-              if (context.mounted) context.go('/login');
-            },
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Claves IronSource')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -95,8 +83,9 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Configura las credenciales de la Reporting API de IronSource. '
-                  'Encuéntralas en Mi cuenta → Reporting API.',
+                  'Configura las credenciales de la Reporting API. '
+                  'En IronSource ve a Mi cuenta → My Account y copia tu '
+                  'Secret Key y Refresh Token.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 24),
@@ -108,24 +97,10 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                   const SizedBox(height: 16),
                 ],
                 TextFormField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'Email (usuario IronSource)',
-                    hintText: 'tu@email.com',
-                    prefixIcon: Icon(Icons.email_outlined),
-                  ),
-                  validator: (v) {
-                    if (v == null || v.trim().isEmpty) return 'Introduce el email';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _secretController,
+                  controller: _secretKeyController,
                   obscureText: _obscureSecret,
                   decoration: InputDecoration(
-                    labelText: 'Secret Key (Reporting API)',
+                    labelText: 'Secret Key',
                     prefixIcon: const Icon(Icons.key),
                     suffixIcon: IconButton(
                       icon: Icon(
@@ -136,7 +111,27 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                     ),
                   ),
                   validator: (v) {
-                    if (v == null || v.isEmpty) return 'Introduce la Secret Key';
+                    if (v == null || v.trim().isEmpty) return 'Introduce la Secret Key';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _refreshTokenController,
+                  obscureText: _obscureRefresh,
+                  decoration: InputDecoration(
+                    labelText: 'Refresh Token',
+                    prefixIcon: const Icon(Icons.refresh),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureRefresh ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscureRefresh = !_obscureRefresh),
+                    ),
+                  ),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'Introduce el Refresh Token';
                     return null;
                   },
                 ),

@@ -12,7 +12,7 @@ class App extends StatelessWidget {
       title: 'IronSource Dashboard',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      routerConfig: AppRouter.createRouter(context),
+      routerConfig: AppRouter.createRouter(),
     );
   }
 }
