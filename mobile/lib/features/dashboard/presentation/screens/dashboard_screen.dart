@@ -1,15 +1,35 @@
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/credentials_updated_notifier.dart';
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/l10n/app_strings.dart';
+import '../../../../core/locale_notifier.dart';
+import '../../../../core/theme/theme_mode_notifier.dart';
 import '../../../../data/credentials/credentials_repository.dart';
 import '../../../../data/ironsource/ironsource_api_client.dart';
 import '../../../../shared/utils/formatters.dart';
+import '../../../../shared/widgets/multi_select_dialog.dart';
 import '../../../../shared/widgets/stat_card.dart';
 import '../../data/dashboard_repository.dart';
 import '../../domain/dashboard_filters.dart';
 import '../../domain/dashboard_stats.dart';
+
+/// metricId para navegar a la pantalla de detalle de cada métrica.
+const Map<String, String> _statCardMetricIds = {
+  'Ingresos': 'revenue',
+  'Impresiones': 'impressions',
+  'eCPM': 'ecpm',
+  'Clicks': 'clicks',
+  'Completados': 'completions',
+  'Fill rate': 'fill_rate',
+  'Completion rate': 'completion_rate',
+  'Revenue/completion': 'revenue_per_completion',
+  'CTR': 'ctr',
+  'App requests': 'app_requests',
+  'DAU': 'dau',
+  'Sesiones': 'sessions',
+};
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -37,7 +57,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _checkCredentials();
+    CredentialsUpdatedNotifier.instance.addListener(_onCredentialsUpdated);
+    ThemeModeNotifier.valueNotifier.addListener(_onThemeChanged);
+    _loadSavedFiltersAndCheckCredentials();
+  }
+
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadSavedFiltersAndCheckCredentials() async {
+    final saved = await DashboardFilters.loadDashboard();
+    if (mounted) {
+      setState(() => _filters = saved);
+      await _checkCredentials();
+    }
+  }
+
+  @override
+  void dispose() {
+    ThemeModeNotifier.valueNotifier.removeListener(_onThemeChanged);
+    CredentialsUpdatedNotifier.instance.removeListener(_onCredentialsUpdated);
+    _saveFilters();
+    super.dispose();
+  }
+
+  void _onCredentialsUpdated() {
+    if (!mounted) return;
+    _cachedRawRows = [];
+    _cachedStartDate = null;
+    _cachedEndDate = null;
+    _load();
+  }
+
+  void _onFiltersChanged() {
+    _applyFiltersFromCache();
+    _saveFilters();
   }
 
   Future<void> _checkCredentials() async {
@@ -55,21 +110,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _cachedEndDate == _filters.endDateStr &&
       _cachedRawRows.isNotEmpty;
 
-  bool _isEmptyFilter(String? v) => v == null || v.isEmpty;
+  bool _listNotEmpty(List<String>? l) => l != null && l.isNotEmpty;
 
-  /// Filtra en memoria: aplica todos los filtros a la vez (app + tipo anuncio + país + plataforma).
+  /// Filtra en memoria: aplica todos los filtros (múltiples valores por dimensión).
   void _applyFiltersFromCache() {
     if (_cachedRawRows.isEmpty) return;
     final filtered = _cachedRawRows.where((row) {
-      if (!_isEmptyFilter(_filters.appKey) && (row.appKey ?? '').trim() != _filters.appKey!.trim()) return false;
-      if (!_isEmptyFilter(_filters.adUnits) && !_adUnitMatches(row.adUnits, _filters.adUnits!)) return false;
-      if (!_isEmptyFilter(_filters.country) && (row.country ?? '').trim().toUpperCase() != _filters.country!.trim().toUpperCase()) return false;
-      if (!_isEmptyFilter(_filters.platform) && (row.platform ?? '').trim().toLowerCase() != _filters.platform!.trim().toLowerCase()) return false;
+      if (_listNotEmpty(_filters.appKeys) && !_filters.appKeys!.contains((row.appKey ?? '').trim())) return false;
+      if (_listNotEmpty(_filters.adUnits) && !_adUnitMatchesAny(row.adUnits, _filters.adUnits!)) return false;
+      if (_listNotEmpty(_filters.countries) && !_filters.countries!.contains((row.country ?? '').trim().toUpperCase())) return false;
+      if (_listNotEmpty(_filters.platforms) && !_filters.platforms!.contains((row.platform ?? '').trim().toLowerCase())) return false;
       return true;
     }).toList();
     _rawRows = filtered;
     _stats = DashboardRepository.statsFromRows(filtered);
     setState(() {});
+  }
+
+  bool _adUnitMatchesAny(String? rowAdUnit, List<String> filterAdUnits) {
+    if (rowAdUnit == null) return false;
+    for (final f in filterAdUnits) {
+      if (_adUnitMatches(rowAdUnit, f)) return true;
+    }
+    return false;
   }
 
   bool _adUnitMatches(String? rowAdUnit, String filterAdUnit) {
@@ -79,6 +142,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return normalized.contains(f) || f.contains(normalized) ||
         (f == 'rewardedvideo' && normalized.contains('rewarded')) ||
         (f == 'offerwall' && normalized.contains('offer'));
+  }
+
+  Future<void> _saveFilters() async {
+    await DashboardFilters.saveDashboard(_filters);
   }
 
   Future<void> _load() async {
@@ -113,11 +180,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  static bool _isKeysError(String? error) {
+    if (error == null || error.isEmpty) return false;
+    final lower = error.toLowerCase();
+    return lower.contains('secret') ||
+        lower.contains('refresh token') ||
+        lower.contains('bearer') ||
+        lower.contains('auth') ||
+        lower.contains('401') ||
+        lower.contains('403') ||
+        lower.contains('unauthorized') ||
+        lower.contains('invalid credentials') ||
+        lower.contains('configura secret') ||
+        lower.contains('token vacío');
+  }
+
   Future<void> _pickDateRange() async {
     final now = DateTime.now();
     final picked = await showDateRangePicker(
       context: context,
-      firstDate: now.subtract(const Duration(days: 365 * 2)),
+      firstDate: DateTime(2020, 1, 1),
       lastDate: now,
       initialDateRange: DateTimeRange(
         start: _filters.startDate,
@@ -132,6 +214,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           datePreset: DateRangePreset.custom,
         );
       });
+      _saveFilters();
       _load();
     }
   }
@@ -167,19 +250,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
         datePreset: preset,
       );
     });
+    _saveFilters();
     _load();
   }
 
   @override
   Widget build(BuildContext context) {
+    final locale = LocaleNotifier.current;
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: Icon(
+            ThemeModeNotifier.current == ThemeMode.light ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
+          ),
+          onPressed: () {
+            ThemeModeNotifier.set(
+              ThemeModeNotifier.current == ThemeMode.light ? ThemeMode.dark : ThemeMode.light,
+            );
+          },
+          tooltip: ThemeModeNotifier.current == ThemeMode.light ? AppStrings.t('dark_mode', locale) : AppStrings.t('light_mode', locale),
+        ),
         title: const Text(AppConstants.appName),
         actions: [
           IconButton(
+            icon: const Icon(Icons.menu_book_outlined),
+            onPressed: () => context.push('/glossary'),
+            tooltip: AppStrings.t('glossary_tooltip', locale),
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => context.push('/credentials'),
-            tooltip: 'Cambiar claves IronSource',
+            tooltip: AppStrings.t('settings_tooltip', locale),
           ),
         ],
       ),
@@ -193,31 +294,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: _loading && _stats == null
             ? const Center(child: CircularProgressIndicator())
             : _error != null && _stats == null
-                ? _ErrorBody(message: _error!, onRetry: _load)
+                ? _ErrorBody(
+                    message: _DashboardScreenState._isKeysError(_error)
+                        ? AppStrings.t('invalid_keys', locale)
+                        : _error!,
+                    onRetry: _load,
+                  )
                 : Stack(
                     children: [
                       SingleChildScrollView(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _buildDateFilters(),
-                            const SizedBox(height: 16),
-                            if (_stats != null) ...[
-                              _buildStatsGrid(_stats!),
-                              const SizedBox(height: 24),
-                              _buildRevenueChart(),
-                              const SizedBox(height: 20),
-                              _buildImpressionsChart(),
-                              const SizedBox(height: 24),
-                              _buildFiltersSection(),
-                              const SizedBox(height: 20),
-                              _buildCountriesSection(),
-                              const SizedBox(height: 20),
-                              _buildDataTable(),
-                            ],
-                          ],
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 1200),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final padding = constraints.maxWidth > 900 ? 24.0 : (constraints.maxWidth > 600 ? 20.0 : 12.0);
+                                return Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: padding),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      _buildDateFilters(),
+                                      SizedBox(height: padding),
+                                      if (_stats != null) ...[
+                                        _buildFiltersSection(),
+                                        SizedBox(height: padding),
+                                        Text(
+                                          AppStrings.t('totals_with_filters', locale),
+                                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        _buildStatsGrid(_stats!, constraints.maxWidth),
+                                        SizedBox(height: padding * 1.2),
+                                        _buildCountriesSection(),
+                                        SizedBox(height: padding),
+                                        _buildDataTable(constraints.maxWidth),
+                                      ],
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
                         ),
                       ),
                       if (_loading && _stats != null)
@@ -226,7 +349,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           left: 0,
                           right: 0,
                           child: Material(
-                            elevation: 2,
+                            elevation: 0,
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 12),
                               color: Theme.of(context).colorScheme.primaryContainer,
@@ -243,7 +366,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ),
                                   const SizedBox(width: 12),
                                   Text(
-                                    'Cargando datos…',
+                                    AppStrings.t('loading_data', locale),
                                     style: Theme.of(context).textTheme.titleSmall,
                                   ),
                                 ],
@@ -258,377 +381,97 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildDateFilters() {
+    final compact = MediaQuery.of(context).size.width < 500;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          _presetChip('Hoy', DateRangePreset.today),
-          const SizedBox(width: 8),
-          _presetChip('Ayer', DateRangePreset.yesterday),
-          const SizedBox(width: 8),
-          _presetChip('7 días', DateRangePreset.last7),
-          const SizedBox(width: 8),
-          _presetChip('30 días', DateRangePreset.last30),
-          const SizedBox(width: 8),
-          _presetChip('90 días', DateRangePreset.last90),
-          const SizedBox(width: 8),
+          _presetChip('Hoy', DateRangePreset.today, compact),
+          SizedBox(width: compact ? 4 : 8),
+          _presetChip('Ayer', DateRangePreset.yesterday, compact),
+          SizedBox(width: compact ? 4 : 8),
+          _presetChip('7d', DateRangePreset.last7, compact),
+          SizedBox(width: compact ? 4 : 8),
+          _presetChip('30d', DateRangePreset.last30, compact),
+          SizedBox(width: compact ? 4 : 8),
+          _presetChip('90d', DateRangePreset.last90, compact),
+          SizedBox(width: compact ? 4 : 8),
           ActionChip(
-            label: const Text('Personalizado'),
+            label: Text(compact ? AppStrings.t('filter_date', LocaleNotifier.current) : AppStrings.t('filter_custom', LocaleNotifier.current)),
             onPressed: _pickDateRange,
-            avatar: const Icon(Icons.calendar_today, size: 18),
+            avatar: Icon(Icons.calendar_today, size: compact ? 14 : 18),
+            padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12, vertical: compact ? 4 : 8),
+            visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
           ),
         ],
       ),
     );
   }
 
-  Widget _presetChip(String label, DateRangePreset preset) {
+  Widget _presetChip(String label, DateRangePreset preset, bool compact) {
     final selected = _filters.datePreset == preset;
     return FilterChip(
-      label: Text(label),
+      label: Text(label, style: TextStyle(fontSize: compact ? 12 : null)),
       selected: selected,
       onSelected: (_) => _applyPreset(preset),
+      selectedColor: Theme.of(context).colorScheme.primaryContainer,
+      checkmarkColor: Theme.of(context).colorScheme.primary,
+      showCheckmark: true,
+      padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12, vertical: compact ? 4 : 8),
+      visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
     );
   }
 
-  Widget _buildStatsGrid(DashboardStats s) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final crossCount = constraints.maxWidth > 600 ? 3 : 2;
-        return GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: crossCount,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 1.4,
-          children: [
-            StatCard(
-              title: 'Ingresos',
-              value: formatMoney(s.revenue),
-              icon: Icons.attach_money,
-            ),
-            StatCard(
-              title: 'Impresiones',
-              value: formatNumber(s.impressions),
-              icon: Icons.visibility,
-            ),
-            StatCard(
-              title: 'eCPM',
-              value: formatMoney(s.ecpm),
-              icon: Icons.trending_up,
-            ),
-            if (s.clicks != null)
-              StatCard(
-                title: 'Clicks',
-                value: formatNumber(s.clicks!),
-                icon: Icons.touch_app,
-              ),
-            if (s.completions != null)
-              StatCard(
-                title: 'Completados',
-                value: formatNumber(s.completions!),
-                icon: Icons.check_circle,
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildRevenueChart() {
-    final byDate = <String, double>{};
-    for (final row in _rawRows) {
-      final date = row.date ?? '';
-      for (final d in row.data ?? []) {
-        final r = (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0.0;
-        byDate[date] = (byDate[date] ?? 0) + r;
-      }
-    }
-    final entries = byDate.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
-    if (entries.isEmpty) {
-      return Card(
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: const Padding(
-          padding: EdgeInsets.all(24),
-          child: Center(child: Text('Sin datos para el gráfico')),
-        ),
-      );
-    }
-    final maxY = entries.map((e) => e.value).reduce((a, b) => a > b ? a : b);
-    final minY = 0.0;
-    final spots = entries.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.value)).toList();
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.show_chart, color: Theme.of(context).colorScheme.primary, size: 22),
-                const SizedBox(width: 8),
-                Text(
-                  'Ingresos por fecha',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              height: 220,
-              child: LineChart(
-                LineChartData(
-                  minY: minY,
-                  maxY: maxY <= 0 ? 1 : (maxY * 1.1),
-                  gridData: FlGridData(
-                    show: true,
-                    drawVerticalLine: false,
-                    getDrawingHorizontalLine: (v) => FlLine(
-                      color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
-                      strokeWidth: 1,
-                    ),
-                  ),
-                  titlesData: FlTitlesData(
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 42,
-                        getTitlesWidget: (value, meta) => Text(
-                          formatMoneyChart(value),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 28,
-                        getTitlesWidget: (value, meta) {
-                          final i = value.toInt();
-                          if (i >= 0 && i < entries.length) {
-                            final dateStr = entries[i].key;
-                            final label = dateStr.length >= 10 ? dateStr.substring(5, 10) : dateStr;
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Text(
-                                label,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            );
-                          }
-                          return const SizedBox();
-                        },
-                      ),
-                    ),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  ),
-                  borderData: FlBorderData(show: false),
-                  lineBarsData: [
-                    LineChartBarData(
-                      spots: spots,
-                      isCurved: true,
-                      barWidth: 2.5,
-                      color: Theme.of(context).colorScheme.primary,
-                      dotData: FlDotData(
-                        show: spots.length <= 20,
-                        getDotPainter: (spot, percent, barData, index) =>
-                            FlDotCirclePainter(
-                              radius: 3,
-                              color: Theme.of(context).colorScheme.primary,
-                              strokeWidth: 0,
-                            ),
-                      ),
-                      belowBarData: BarAreaData(
-                        show: true,
-                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+  Widget _wrapMetricCard(String title, String value, IconData icon, [String? metricId]) {
+    final id = metricId ?? _statCardMetricIds[title] ?? 'revenue';
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => context.push('/dashboard/metric/$id'),
+        borderRadius: BorderRadius.circular(16),
+        child: StatCard(
+          title: title,
+          value: value,
+          icon: icon,
         ),
       ),
     );
   }
 
-  /// Gráfica de impresiones por fecha. Con muchos días (ej. 90) agrupa por semana para que no se encime.
-  Widget _buildImpressionsChart() {
-    final byDate = <String, int>{};
-    for (final row in _rawRows) {
-      final date = row.date ?? '';
-      for (final d in row.data ?? []) {
-        final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
-        byDate[date] = (byDate[date] ?? 0) + imp;
-      }
-    }
-    var entries = byDate.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
-    if (entries.isEmpty) return const SizedBox.shrink();
-
-    // Con más de 21 días, agrupar por semana para que no se encimen las barras
-    const maxBars = 21;
-    if (entries.length > maxBars) {
-      final byWeek = <String, int>{};
-      for (final e in entries) {
-        final d = DateTime.tryParse(e.key);
-        if (d != null) {
-          final weekStart = d.subtract(Duration(days: d.weekday - 1));
-          final key = '${weekStart.year}-${weekStart.month.toString().padLeft(2, '0')}-${weekStart.day.toString().padLeft(2, '0')}';
-          byWeek[key] = (byWeek[key] ?? 0) + e.value;
-        }
-      }
-      entries = byWeek.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
-    }
-
-    final maxY = entries.map((e) => e.value.toDouble()).reduce((a, b) => a > b ? a : b);
-    final barCount = entries.length;
-    final barWidth = (barCount > 14) ? 8.0 : (barCount > 7 ? 14.0 : 20.0);
-
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.visibility, color: Theme.of(context).colorScheme.secondary, size: 22),
-                const SizedBox(width: 8),
-                Text(
-                  barCount <= maxBars ? 'Impresiones por fecha' : 'Impresiones por semana',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              height: 180,
-              child: BarChart(
-                BarChartData(
-                  alignment: BarChartAlignment.spaceAround,
-                  maxY: maxY <= 0 ? 1 : (maxY * 1.1),
-                  barTouchData: BarTouchData(
-                    enabled: true,
-                    touchTooltipData: BarTouchTooltipData(
-                      getTooltipColor: (_) => Theme.of(context).colorScheme.inverseSurface,
-                      tooltipBorderRadius: BorderRadius.circular(8),
-                      tooltipPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                        final dateLabel = groupIndex >= 0 && groupIndex < entries.length
-                            ? entries[groupIndex].key
-                            : '';
-                        return BarTooltipItem(
-                          '${formatNumberChart(rod.toY.toInt())}\n$dateLabel',
-                          TextStyle(
-                            color: Theme.of(context).colorScheme.onInverseSurface,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  titlesData: FlTitlesData(
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 40,
-                        getTitlesWidget: (value, meta) => Text(
-                          formatNumberChart(value.toInt()),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 28,
-                        interval: barCount > 14 ? (barCount / 7).ceilToDouble() : 1,
-                        getTitlesWidget: (value, meta) {
-                          final i = value.toInt();
-                          if (i >= 0 && i < entries.length) {
-                            final label = entries[i].key.length >= 10
-                                ? entries[i].key.substring(5, 10)
-                                : entries[i].key;
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Text(
-                                label,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
-                            );
-                          }
-                          return const SizedBox();
-                        },
-                      ),
-                    ),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  ),
-                  gridData: FlGridData(
-                    show: true,
-                    drawVerticalLine: false,
-                    getDrawingHorizontalLine: (v) => FlLine(
-                      color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
-                      strokeWidth: 1,
-                    ),
-                  ),
-                  borderData: FlBorderData(show: false),
-                  barGroups: entries.asMap().entries.map((e) {
-                    final value = e.value.value.toDouble();
-                    return BarChartGroupData(
-                      x: e.key,
-                      barRods: [
-                        BarChartRodData(
-                          toY: value,
-                          color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.8),
-                          width: barWidth,
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                        ),
-                      ],
-                      showingTooltipIndicators: [],
-                    );
-                  }).toList(),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+  Widget _buildStatsGrid(DashboardStats s, double width) {
+    final l = LocaleNotifier.current;
+    final crossCount = width > 900 ? 4 : (width > 600 ? 3 : 2);
+    final cards = <Widget>[
+      _wrapMetricCard(AppStrings.t('ingresos', l), formatMoney(s.revenue), Icons.attach_money, 'revenue'),
+      _wrapMetricCard(AppStrings.t('impressions', l), formatNumber(s.impressions), Icons.visibility, 'impressions'),
+      _wrapMetricCard(AppStrings.t('ecpm', l), formatMoney(s.ecpm), Icons.trending_up, 'ecpm'),
+      if (s.clicks != null)
+        _wrapMetricCard(AppStrings.t('clicks', l), formatNumber(s.clicks!), Icons.touch_app, 'clicks'),
+      if (s.completions != null)
+        _wrapMetricCard(AppStrings.t('completions', l), formatNumber(s.completions!), Icons.check_circle, 'completions'),
+      if (s.fillRate != null && s.fillRate! > 0)
+        _wrapMetricCard(AppStrings.t('fill_rate', l), '${s.fillRate!.toStringAsFixed(2)}%', Icons.pie_chart_outline, 'fill_rate'),
+      if (s.completionRate != null && s.completionRate! > 0)
+        _wrapMetricCard(AppStrings.t('completion_rate', l), '${s.completionRate!.toStringAsFixed(2)}%', Icons.done_all, 'completion_rate'),
+      if (s.revenuePerCompletion != null && s.revenuePerCompletion! > 0)
+        _wrapMetricCard(AppStrings.t('revenue_per_completion', l), formatMoney(s.revenuePerCompletion!), Icons.monetization_on_outlined, 'revenue_per_completion'),
+      if (s.ctr != null && s.ctr! > 0)
+        _wrapMetricCard(AppStrings.t('ctr', l), '${s.ctr!.toStringAsFixed(2)}%', Icons.ads_click, 'ctr'),
+      if (s.appRequests != null && s.appRequests! > 0)
+        _wrapMetricCard(AppStrings.t('app_requests', l), formatNumber(s.appRequests!), Icons.sync, 'app_requests'),
+      if (s.dau != null && s.dau! > 0)
+        _wrapMetricCard(AppStrings.t('dau', l), formatNumber(s.dau!), Icons.people, 'dau'),
+      if (s.sessions != null && s.sessions! > 0)
+        _wrapMetricCard(AppStrings.t('sessions', l), formatNumber(s.sessions!), Icons.event_note, 'sessions'),
+    ];
+    return GridView.count(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisCount: crossCount,
+      mainAxisSpacing: 12,
+      crossAxisSpacing: 12,
+      childAspectRatio: width > 600 ? 1.5 : 1.35,
+      children: cards,
     );
   }
 
@@ -659,14 +502,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildCountriesSection() {
     final byCountry = _aggregateByCountry();
-    if (byCountry.isEmpty) return const SizedBox.shrink();
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+            ],
+          ),
         ),
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -677,7 +526,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Icon(Icons.public, color: Theme.of(context).colorScheme.tertiary, size: 22),
                 const SizedBox(width: 8),
                 Text(
-                  'Por país',
+                  AppStrings.t('by_country', LocaleNotifier.current),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -685,70 +534,153 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            ...byCountry.take(12).map((r) {
-              final code = r['countryCode'] as String?;
-              final name = formatCountry(code);
-              final rev = (r['revenue'] as num).toDouble();
-              final imp = r['impressions'] as int;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: Text(
-                        name,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        formatMoney(rev),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        textAlign: TextAlign.end,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      formatNumber(imp),
-                      style: Theme.of(context).textTheme.bodySmall,
-                      textAlign: TextAlign.end,
-                    ),
-                  ],
+            if (byCountry.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  AppStrings.t('no_country_data', LocaleNotifier.current),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              );
-            }),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LayoutBuilder(
+                    builder: (context, c) {
+                      final w = c.maxWidth;
+                      final colRev = w > 400 ? 90.0 : 70.0;
+                      final colImp = w > 400 ? 95.0 : 82.0;
+                      final colCountry = w - colRev - colImp - 16;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: colCountry,
+                                child: Text(
+                                  AppStrings.t('filter_country', LocaleNotifier.current),
+                                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                  overflow: TextOverflow.visible,
+                                ),
+                              ),
+                              SizedBox(
+                                width: colRev,
+                                child: Text(
+                                  AppStrings.t('revenue', LocaleNotifier.current),
+                                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                  textAlign: TextAlign.end,
+                                  overflow: TextOverflow.visible,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: colImp,
+                                child: Text(
+                                  AppStrings.t('impressions', LocaleNotifier.current),
+                                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                  textAlign: TextAlign.end,
+                                  overflow: TextOverflow.visible,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          ...byCountry.take(12).map((r) {
+                            final code = r['countryCode'] as String?;
+                            final name = formatCountry(code);
+                            final rev = (r['revenue'] as num).toDouble();
+                            final imp = r['impressions'] as int;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: colCountry,
+                                    child: Text(
+                                      name,
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: colRev,
+                                    child: Text(
+                                      formatMoney(rev),
+                                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: Theme.of(context).colorScheme.primary,
+                                      ),
+                                      textAlign: TextAlign.end,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    width: colImp,
+                                    child: Text(
+                                      formatNumber(imp),
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                      textAlign: TextAlign.end,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
           ],
         ),
       ),
     );
   }
 
-  List<String?> get _uniqueCountryCodes {
-    final set = <String?>{};
-    for (final row in _cachedRawRows) {
-      final c = row.country?.trim();
-      if (c == null || c.isEmpty) {
-        set.add(null);
-      } else {
-        set.add(c);
-      }
+  /// Lista unificada: countryCodesForFilter + países que aparecen en los datos.
+  List<String> get _countryFilterOptions {
+    final base = countryCodesForFilter.toSet();
+    for (final row in _rawRows) {
+      final c = (row.country ?? '').trim().toUpperCase();
+      if (c.isNotEmpty) base.add(c);
     }
-    return set.toList()..sort((a, b) => (a ?? '').compareTo(b ?? ''));
+    return base.toList()..sort();
   }
 
   Widget _buildFiltersSection() {
+    final isWide = MediaQuery.of(context).size.width > 700;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+            ],
+          ),
         ),
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -759,7 +691,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Icon(Icons.filter_list, color: Theme.of(context).colorScheme.primary, size: 22),
                 const SizedBox(width: 8),
                 Text(
-                  'Filtros',
+                  AppStrings.t('filters', LocaleNotifier.current),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -767,84 +699,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: _filters.appKey ?? '',
-              decoration: InputDecoration(
-                labelText: 'App',
-                isDense: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              items: [
-                const DropdownMenuItem(value: '', child: Text('Todas')),
-                ..._apps.where((a) => (a.appKey ?? '').isNotEmpty).map((a) => DropdownMenuItem<String>(
-                      value: a.appKey!,
-                      child: Text('${a.appName ?? a.appKey} (${a.platform ?? ''})'),
-                    )),
-              ],
-              onChanged: (v) {
-                setState(() => _filters = _filters.copyWith(appKey: (v == null || v.isEmpty) ? '' : v));
-                _applyFiltersFromCache();
-              },
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _filters.adUnits ?? '',
-              decoration: InputDecoration(
-                labelText: 'Tipo de anuncio',
-                isDense: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              items: const [
-                DropdownMenuItem(value: '', child: Text('Todos')),
-                DropdownMenuItem(value: 'rewardedVideo', child: Text('Rewarded Video')),
-                DropdownMenuItem(value: 'interstitial', child: Text('Interstitial')),
-                DropdownMenuItem(value: 'banner', child: Text('Banner')),
-                DropdownMenuItem(value: 'offerWall', child: Text('Offerwall')),
-              ],
-              onChanged: (v) {
-                setState(() => _filters = _filters.copyWith(adUnits: (v == null || v.isEmpty) ? '' : v));
-                _applyFiltersFromCache();
-              },
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _filters.platform ?? '',
-              decoration: InputDecoration(
-                labelText: 'Plataforma',
-                isDense: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              items: const [
-                DropdownMenuItem(value: '', child: Text('Todas')),
-                DropdownMenuItem(value: 'android', child: Text('Android')),
-                DropdownMenuItem(value: 'ios', child: Text('iOS')),
-              ],
-              onChanged: (v) {
-                setState(() => _filters = _filters.copyWith(platform: (v == null || v.isEmpty) ? '' : v));
-                _applyFiltersFromCache();
-              },
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _filters.country ?? '',
-              decoration: InputDecoration(
-                labelText: 'País',
-                isDense: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              items: [
-                const DropdownMenuItem(value: '', child: Text('Todos')),
-                ..._uniqueCountryCodes
-                    .whereType<String>()
-                    .where((c) => c.isNotEmpty)
-                    .map((code) => DropdownMenuItem<String>(
-                          value: code,
-                          child: Text(formatCountry(code)),
-                        )),
-              ],
-              onChanged: (v) {
-                setState(() => _filters = _filters.copyWith(country: (v == null || v.isEmpty) ? '' : v));
-                _applyFiltersFromCache();
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 400;
+                final dropWidth = compact ? 110.0 : (constraints.maxWidth > 700 ? 180.0 : 140.0);
+                final maxW = constraints.maxWidth;
+                if (isWide) {
+                  return ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: maxW),
+                    child: ClipRect(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        clipBehavior: Clip.hardEdge,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(width: dropWidth, child: _buildAppDropdown(compact)),
+                            SizedBox(width: compact ? 6.0 : 12.0),
+                            SizedBox(width: dropWidth, child: _buildAdUnitDropdown(compact)),
+                            SizedBox(width: compact ? 6.0 : 12.0),
+                            SizedBox(width: compact ? 100.0 : 140.0, child: _buildPlatformDropdown(compact)),
+                            SizedBox(width: compact ? 6.0 : 12.0),
+                            SizedBox(width: dropWidth, child: _buildCountryDropdown(compact)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                return ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxW),
+                  child: Wrap(
+                    spacing: compact ? 8.0 : 12.0,
+                    runSpacing: compact ? 8.0 : 12.0,
+                    children: [
+                      SizedBox(width: (maxW - (compact ? 8.0 : 12.0)) / 2, child: _buildAppDropdown(compact)),
+                      SizedBox(width: (maxW - (compact ? 8.0 : 12.0)) / 2, child: _buildAdUnitDropdown(compact)),
+                      SizedBox(width: (maxW - (compact ? 8.0 : 12.0)) / 2, child: _buildPlatformDropdown(compact)),
+                      SizedBox(width: (maxW - (compact ? 8.0 : 12.0)) / 2, child: _buildCountryDropdown(compact)),
+                    ],
+                  ),
+                );
               },
             ),
           ],
@@ -853,7 +748,182 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Agrupa por fecha: una fila por día con totales (menos filas, más claro).
+  Widget _buildAppDropdown([bool compact = false]) {
+    final apps = _apps.where((a) => (a.appKey ?? '').isNotEmpty).toList();
+    final selected = _filters.appKeys ?? [];
+    final selectedSet = selected.toSet();
+    final optsCount = apps.length;
+    final allSelected = selected.isNotEmpty && optsCount > 0 &&
+        apps.every((a) => selectedSet.contains(a.appKey));
+    final l = LocaleNotifier.current;
+    String valueLabel;
+    if (selected.isEmpty || allSelected) {
+      valueLabel = AppStrings.t('all_apps', l);
+    } else if (selected.length == 1) {
+      final a = apps.cast<IronSourceApp?>().firstWhere((x) => x?.appKey == selected.single, orElse: () => null);
+      valueLabel = a != null ? '${a.appName ?? a.appKey} (${a.platform ?? ''})' : selected.single;
+    } else {
+      valueLabel = '${selected.length} ${AppStrings.t('apps_count', l)}';
+    }
+    return _buildFilterChip(
+      label: AppStrings.t('app_filter', l),
+      valueLabel: valueLabel,
+      compact: compact,
+      onTap: () async {
+        final options = apps.map((a) => '${a.appKey}|${a.platform ?? ''}').toList();
+        final labels = apps.map((a) => '${a.appName ?? a.appKey} (${a.platform ?? ''})').toList();
+        final allSelectedForDialog = selected.isEmpty || (optsCount > 0 && apps.every((a) => selectedSet.contains(a.appKey)));
+        final initialSelected = allSelectedForDialog
+            ? options.toSet()
+            : apps.where((a) => selectedSet.contains(a.appKey)).map((a) => '${a.appKey}|${a.platform ?? ''}').toSet();
+        final chosen = await _showMultiSelect(
+          title: AppStrings.t('app_filter', l),
+          options: options,
+          labels: labels,
+          selected: initialSelected,
+        );
+        if (chosen != null && mounted) {
+          final all = chosen.isEmpty || (options.isNotEmpty && chosen.length >= options.length);
+          final appKeys = all ? null : chosen.map((s) => s.split('|').first).toSet().toList();
+          setState(() => _filters = _filters.copyWith(appKeys: appKeys, clearAppKeys: all));
+          _onFiltersChanged();
+        }
+      },
+    );
+  }
+
+  Widget _buildAdUnitDropdown([bool compact = false]) {
+    const options = ['rewardedVideo', 'interstitial', 'banner', 'offerWall'];
+    final l = LocaleNotifier.current;
+    final labels = [AppStrings.t('rewarded_video', l), AppStrings.t('interstitial', l), AppStrings.t('banner', l), AppStrings.t('offerwall', l)];
+    final selected = _filters.adUnits ?? [];
+    final label = selected.isEmpty || selected.length >= options.length ? AppStrings.t('all', l) : (selected.length == 1 ? labels[options.indexOf(selected.single)] : '${selected.length} ${AppStrings.t('ad_types_count', l)}');
+    return _buildFilterChip(
+      label: compact ? AppStrings.t('filter_ad_compact', l) : AppStrings.t('filter_ad_type', l),
+      valueLabel: label,
+      compact: compact,
+      onTap: () async {
+        final allSelected = selected.isEmpty || selected.length >= options.length;
+        final chosen = await _showMultiSelect(title: AppStrings.t('filter_ad_type', l), options: options, labels: labels, selected: allSelected ? options.toSet() : selected.toSet());
+        if (chosen != null && mounted) {
+          final all = chosen.isEmpty || chosen.length >= options.length;
+          setState(() => _filters = _filters.copyWith(adUnits: all ? null : chosen, clearAdUnits: all));
+          _onFiltersChanged();
+        }
+      },
+    );
+  }
+
+  Widget _buildPlatformDropdown([bool compact = false]) {
+    const options = ['android', 'ios'];
+    final l = LocaleNotifier.current;
+    final labels = [AppStrings.t('android', l), AppStrings.t('ios', l)];
+    final selected = _filters.platforms ?? [];
+    final label = selected.isEmpty || selected.length >= options.length ? AppStrings.t('all_platforms', l) : (selected.length == 1 ? labels[options.indexOf(selected.single)] : '${selected.length} ${AppStrings.t('platforms_count', l)}');
+    return _buildFilterChip(
+      label: compact ? AppStrings.t('filter_os_compact', l) : AppStrings.t('filter_platform', l),
+      valueLabel: label,
+      compact: compact,
+      onTap: () async {
+        final allSelected = selected.isEmpty || selected.length >= 2;
+        final chosen = await _showMultiSelect(title: AppStrings.t('filter_platform', l), options: options, labels: labels, selected: allSelected ? options.toSet() : selected.toSet());
+        if (chosen != null && mounted) {
+          final all = chosen.isEmpty || chosen.length >= 2;
+          setState(() => _filters = _filters.copyWith(platforms: all ? null : chosen, clearPlatforms: all));
+          _onFiltersChanged();
+        }
+      },
+    );
+  }
+
+  Widget _buildCountryDropdown([bool compact = false]) {
+    final l = LocaleNotifier.current;
+    final options = _countryFilterOptions;
+    final selected = _filters.countries ?? [];
+    final allSelected = selected.isNotEmpty && options.isNotEmpty &&
+        selected.toSet().containsAll(options) && options.toSet().containsAll(selected);
+    final label = selected.isEmpty || allSelected ? AppStrings.t('all', l) : (selected.length == 1 ? formatCountry(selected.single) : '${selected.length} ${AppStrings.t('countries_count', l)}');
+    return _buildFilterChip(
+      label: AppStrings.t('filter_country', l),
+      valueLabel: label,
+      compact: compact,
+      onTap: () async {
+        final allSelectedForDialog = selected.isEmpty || allSelected;
+        final chosen = await _showMultiSelect(
+          title: AppStrings.t('filter_country', l),
+          options: options,
+          labels: options.map(formatCountry).toList(),
+          selected: allSelectedForDialog ? options.toSet() : selected.toSet(),
+        );
+        if (chosen != null && mounted) {
+          final all = chosen.isEmpty || chosen.length >= options.length;
+          setState(() => _filters = _filters.copyWith(countries: all ? null : chosen, clearCountries: all));
+          _onFiltersChanged();
+        }
+      },
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required String valueLabel,
+    required bool compact,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(compact ? 8 : 12),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14, vertical: compact ? 10 : 12),
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.5)),
+          borderRadius: BorderRadius.circular(compact ? 8 : 12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 11,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Expanded(child: Text(valueLabel, overflow: TextOverflow.ellipsis, maxLines: 1, style: Theme.of(context).textTheme.bodyMedium)),
+                const Icon(Icons.arrow_drop_down, size: 20),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<List<String>?> _showMultiSelect({
+    required String title,
+    required List<String> options,
+    required List<String> labels,
+    required Set<String> selected,
+  }) async {
+    return showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => MultiSelectDialog(
+        title: title,
+        options: options,
+        labels: labels,
+        selected: selected,
+      ),
+    );
+  }
+
+  /// Agrupa por fecha: todas las métricas del glosario (API + calculadas).
   List<Map<String, dynamic>> _aggregateRowsByDate() {
     final byDate = <String, Map<String, dynamic>>{};
     for (final row in _rawRows) {
@@ -864,43 +934,111 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
         final clk = (d['clicks'] is num) ? (d['clicks'] as num).toInt() : 0;
         final comp = (d['completions'] is num) ? (d['completions'] as num).toInt() : 0;
+        final appReq = (d['appRequests'] is num) ? (d['appRequests'] as num).toInt() : 0;
+        final dauVal = (d['dau'] is num) ? (d['dau'] as num).toInt() : 0;
+        final sess = (d['sessions'] is num) ? (d['sessions'] as num).toInt() : 0;
+        final fr = (d['appFillRate'] is num) ? (d['appFillRate'] as num).toDouble() : 0.0;
+        final cr = (d['completionRate'] is num) ? (d['completionRate'] as num).toDouble() : 0.0;
+        final rpc = (d['revenuePerCompletion'] is num) ? (d['revenuePerCompletion'] as num).toDouble() : 0.0;
+        final ctr = (d['clickThroughRate'] is num) ? (d['clickThroughRate'] as num).toDouble() : 0.0;
         if (!byDate.containsKey(date)) {
-          byDate[date] = {'revenue': 0.0, 'impressions': 0, 'clicks': 0, 'completions': 0};
+          byDate[date] = {
+            'revenue': 0.0, 'impressions': 0, 'clicks': 0, 'completions': 0,
+            'appRequests': 0, 'dau': 0, 'sessions': 0,
+            'fillRateSum': 0.0, 'fillRateCount': 0,
+            'completionRateSum': 0.0, 'completionRateCount': 0,
+            'revPerCompSum': 0.0, 'revPerCompCount': 0,
+            'ctrSum': 0.0, 'ctrCount': 0,
+          };
         }
         final acc = byDate[date]!;
         acc['revenue'] = (acc['revenue'] as num) + rev;
         acc['impressions'] = (acc['impressions'] as int) + imp;
         acc['clicks'] = (acc['clicks'] as int) + clk;
         acc['completions'] = (acc['completions'] as int) + comp;
+        acc['appRequests'] = (acc['appRequests'] as int) + appReq;
+        acc['dau'] = (acc['dau'] as int) + dauVal;
+        acc['sessions'] = (acc['sessions'] as int) + sess;
+        if (fr > 0) { acc['fillRateSum'] = (acc['fillRateSum'] as num) + fr; acc['fillRateCount'] = (acc['fillRateCount'] as int) + 1; }
+        if (cr > 0) { acc['completionRateSum'] = (acc['completionRateSum'] as num) + cr; acc['completionRateCount'] = (acc['completionRateCount'] as int) + 1; }
+        if (rpc > 0) { acc['revPerCompSum'] = (acc['revPerCompSum'] as num) + rpc; acc['revPerCompCount'] = (acc['revPerCompCount'] as int) + 1; }
+        if (ctr > 0) { acc['ctrSum'] = (acc['ctrSum'] as num) + ctr; acc['ctrCount'] = (acc['ctrCount'] as int) + 1; }
       }
     }
     final list = byDate.entries.map((e) {
       final v = e.value;
       final rev = (v['revenue'] as num).toDouble();
       final imp = v['impressions'] as int;
-      final clk = v['clicks'] as int;
       final comp = v['completions'] as int;
+      final fillCount = v['fillRateCount'] as int;
+      final crCount = v['completionRateCount'] as int;
+      final rpcCount = v['revPerCompCount'] as int;
+      final ctrCount = v['ctrCount'] as int;
       return <String, dynamic>{
         'date': e.key,
         'revenue': rev,
         'impressions': imp,
         'eCPM': imp > 0 ? (rev / imp) * 1000 : 0.0,
-        'clicks': clk,
+        'clicks': v['clicks'] as int,
         'completions': comp,
+        'fillRate': fillCount > 0 ? (v['fillRateSum'] as num) / fillCount : null,
+        'completionRate': crCount > 0 ? (v['completionRateSum'] as num) / crCount : (imp > 0 && comp > 0 ? (comp / imp) * 100 : null),
+        'revenuePerCompletion': rpcCount > 0 ? (v['revPerCompSum'] as num) / rpcCount : (comp > 0 ? rev / comp : null),
+        'ctr': ctrCount > 0 ? (v['ctrSum'] as num) / ctrCount : null,
+        'appRequests': (v['appRequests'] as int) > 0 ? v['appRequests'] : null,
+        'dau': (v['dau'] as int) > 0 ? v['dau'] : null,
+        'sessions': (v['sessions'] as int) > 0 ? v['sessions'] : null,
       };
     }).toList();
     list.sort((a, b) => (a['date'] as String).compareTo(b['date'] as String));
     return list;
   }
 
-  Widget _buildDataTable() {
+  List<DataRow> _dataTableRows(List<Map<String, dynamic>> aggregated) {
+    return aggregated.map((r) {
+      final dateStr = r['date'] as String;
+      final revenue = (r['revenue'] as num).toDouble();
+      final impressions = r['impressions'] as int;
+      final ecpm = (r['eCPM'] as num).toDouble();
+      final clicks = r['clicks'] as int;
+      final completions = r['completions'] as int;
+      final fillRate = r['fillRate'] as double?;
+      final completionRate = r['completionRate'] as double?;
+      final revPerComp = r['revenuePerCompletion'] as double?;
+      final ctr = r['ctr'] as double?;
+      final appRequests = r['appRequests'] as int?;
+      final dau = r['dau'] as int?;
+      final sessions = r['sessions'] as int?;
+      return DataRow(
+        cells: [
+          DataCell(Tooltip(message: dateStr, child: Text(dateStr))),
+          DataCell(_cell(formatMoney(revenue))),
+          DataCell(_cell(formatNumber(impressions))),
+          DataCell(_cell(formatMoney(ecpm))),
+          DataCell(_cell(formatNumber(clicks))),
+          DataCell(_cell(formatNumber(completions))),
+          DataCell(_cell(fillRate != null ? '${formatDecimal(fillRate)}%' : '—')),
+          DataCell(_cell(completionRate != null ? '${formatDecimal(completionRate)}%' : '—')),
+          DataCell(_cell(revPerComp != null ? formatMoney(revPerComp) : '—')),
+          DataCell(_cell(ctr != null ? '${formatDecimal(ctr)}%' : '—')),
+          DataCell(_cell(appRequests != null ? formatNumber(appRequests) : '—')),
+          DataCell(_cell(dau != null ? formatNumber(dau) : '—')),
+          DataCell(_cell(sessions != null ? formatNumber(sessions) : '—')),
+        ],
+      );
+    }).toList();
+  }
+
+  Widget _cell(String text) => Tooltip(message: text, child: Text(text, overflow: TextOverflow.ellipsis));
+
+  Widget _buildDataTable(double width) {
     if (_rawRows.isEmpty) {
       return Card(
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: const Padding(
-          padding: EdgeInsets.all(24),
-          child: Center(child: Text('Sin datos para la tabla')),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Center(child: Text(AppStrings.t('no_data_table', LocaleNotifier.current))),
         ),
       );
     }
@@ -911,7 +1049,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+            ],
+          ),
         ),
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -922,7 +1067,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Icon(Icons.table_chart, color: Theme.of(context).colorScheme.primary, size: 22),
                 const SizedBox(width: 8),
                 Text(
-                  'Totales por día',
+                  AppStrings.t('totals_by_day', LocaleNotifier.current),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -936,53 +1081,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 headingRowColor: WidgetStateProperty.all(
                   Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                 ),
-                dataRowColor: WidgetStateProperty.resolveWith((states) {
-                  return null;
-                }),
+                dataRowColor: WidgetStateProperty.resolveWith((states) => null),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                columns: const [
-                  DataColumn(label: Text('Fecha')),
-                  DataColumn(label: Text('Ingresos'), numeric: true),
-                  DataColumn(label: Text('Impresiones'), numeric: true),
-                  DataColumn(label: Text('eCPM'), numeric: true),
-                  DataColumn(label: Text('Clicks'), numeric: true),
-                  DataColumn(label: Text('Completados'), numeric: true),
+                columns: [
+                  DataColumn(label: Text(AppStrings.t('date', LocaleNotifier.current))),
+                  DataColumn(label: Text(AppStrings.t('income', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('impressions', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('ecpm', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('clicks', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('completions', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('fill_rate', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('completion_rate', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('rev_comp', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('ctr', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('app_requests', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('dau', LocaleNotifier.current)), numeric: true),
+                  DataColumn(label: Text(AppStrings.t('sessions', LocaleNotifier.current)), numeric: true),
                 ],
-                rows: aggregated.map((r) {
-                  final revenue = (r['revenue'] as num).toDouble();
-                  final impressions = r['impressions'] as int;
-                  final ecpm = (r['eCPM'] as num).toDouble();
-                  final clicks = r['clicks'] as int;
-                  final completions = r['completions'] as int;
-                  final dateStr = r['date'] as String;
-                  return DataRow(
-                    cells: [
-                      DataCell(Tooltip(message: dateStr, child: Text(dateStr))),
-                      DataCell(Tooltip(
-                        message: formatMoney(revenue),
-                        child: Text(formatMoney(revenue)),
-                      )),
-                      DataCell(Tooltip(
-                        message: formatNumber(impressions),
-                        child: Text(formatNumber(impressions)),
-                      )),
-                      DataCell(Tooltip(
-                        message: formatMoney(ecpm),
-                        child: Text(formatMoney(ecpm)),
-                      )),
-                      DataCell(Tooltip(
-                        message: formatNumber(clicks),
-                        child: Text(formatNumber(clicks)),
-                      )),
-                      DataCell(Tooltip(
-                        message: formatNumber(completions),
-                        child: Text(formatNumber(completions)),
-                      )),
-                    ],
-                  );
-                }).toList(),
+                rows: _dataTableRows(aggregated),
               ),
             ),
           ],
@@ -1006,14 +1124,22 @@ class _ErrorBody extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 48, color: Theme.of(context).colorScheme.error),
+            Icon(
+              Icons.error_outline_rounded,
+              size: 56,
+              color: Theme.of(context).colorScheme.error.withValues(alpha: 0.9),
+            ),
             const SizedBox(height: 16),
-            Text(message, textAlign: TextAlign.center),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),
-              label: const Text('Reintentar'),
+              label: Text(AppStrings.t('retry', LocaleNotifier.current)),
             ),
           ],
         ),

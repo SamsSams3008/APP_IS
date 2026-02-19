@@ -26,7 +26,17 @@ class IronSourceStatsRow {
   static String? _str(Map<String, dynamic> j, String key, [String? altKey]) {
     final v = j[key] ?? (altKey != null ? j[altKey] : null);
     if (v == null) return null;
-    final s = (v is String ? v : v.toString()).trim();
+    if (v is String) {
+      final s = v.trim();
+      return s.isEmpty ? null : s;
+    }
+    if (v is Map<String, dynamic>) {
+      final code = v['code'] ?? v['id'] ?? v['countryCode'];
+      final name = v['name'] ?? v['countryName'];
+      final s = (code is String ? code : name is String ? name : null)?.trim();
+      return (s != null && s.isNotEmpty) ? s : null;
+    }
+    final s = v.toString().trim();
     return s.isEmpty ? null : s;
   }
 
@@ -45,18 +55,62 @@ class IronSourceStatsRow {
     return null;
   }
 
+  /// Busca cualquier clave que contenga 'country' (case insensitive) en el JSON.
+  /// Normaliza a código ISO de 2 letras (toma los dos primeros caracteres si viene nombre largo).
+  static String? _countryFromAnyKey(Map<String, dynamic> json) {
+    String? fromMap(Map<String, dynamic> m) {
+      for (final e in m.entries) {
+        if (e.key.toString().toLowerCase().contains('country')) {
+          final v = e.value;
+          if (v == null) continue;
+          final s = (v is String ? v : v.toString()).trim();
+          if (s.isEmpty) continue;
+          // Si es código de 2 letras (ej. US), devolver en mayúsculas
+          if (s.length == 2) return s.toUpperCase();
+          // Si es nombre largo (ej. "United States"), devolver tal cual para que formatCountry pueda no reconocerlo y mostrar el código
+          if (s.length > 2 && s.length <= 3) return s.toUpperCase();
+          return s;
+        }
+      }
+      return null;
+    }
+    var v = fromMap(json);
+    if (v != null) return v;
+    final dims = json['dimensions'];
+    if (dims is Map<String, dynamic>) return fromMap(dims);
+    return null;
+  }
+
+  static double _num(Map<String, dynamic> j, String key, [String? alt]) {
+    final v = j[key] ?? (alt != null ? j[alt] : null);
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v) ?? 0;
+    return 0;
+  }
+
   /// Desde la API v1 (LevelPlay): cada item de data es una fila plana.
   static IronSourceStatsRow fromReportingV1Row(Map<String, dynamic> json) {
     final adFormat = _strFrom(json, ['adFormat', 'adUnits', 'adUnit']);
     final date = _strFrom(json, ['date', 'day']);
     final platform = _strFrom(json, ['platform', 'os']);
-    final country = _strFrom(json, ['country', 'countryCode', 'country_iso', 'country_code']);
+    final country = _strFrom(json, ['country', 'countryCode', 'country_iso', 'country_code', 'countryId', 'country_name']) ?? _countryFromAnyKey(json);
     final app = _strFrom(json, ['app', 'appKey', 'applicationKey', 'application_key']);
-    final revenue = (json['revenue'] is num) ? (json['revenue'] as num).toDouble() : 0.0;
-    final impressions = (json['impressions'] is num) ? (json['impressions'] as num).toInt() : 0;
-    final eCPM = (json['eCPM'] is num) ? (json['eCPM'] as num).toDouble() : 0.0;
-    final clicks = (json['clicks'] is num) ? (json['clicks'] as num).toInt() : 0;
-    final completions = (json['completions'] is num) ? (json['completions'] as num).toInt() : 0;
+    final revenue = _num(json, 'revenue');
+    final impressions = (_num(json, 'impressions')).toInt();
+    final eCPM = _num(json, 'eCPM', 'ecpm');
+    final clicks = _num(json, 'clicks').toInt();
+    final completions = _num(json, 'completions').toInt();
+    final appFillRate = _num(json, 'appFillRate', 'appFillRate');
+    final completionRate = _num(json, 'completionRate', 'completionRate');
+    final revenuePerCompletion = _num(json, 'revenuePerCompletion', 'revenuePerCompletion');
+    final clickThroughRate = _num(json, 'clickThroughRate', 'ctr');
+    final appRequests = _num(json, 'appRequests', 'appRequests').toInt();
+    // API usa "activeUsers" (DAU); ver https://developers.is.com/ironsource-mobile/air/metrics-definition/
+    var dauVal = _num(json, 'activeUsers');
+    if (dauVal == 0) dauVal = _num(json, 'dau');
+    if (dauVal == 0) dauVal = _num(json, 'dailyActiveUsers');
+    final dau = dauVal.toInt();
+    final sessions = _num(json, 'sessions').toInt();
     return IronSourceStatsRow(
       adUnits: adFormat,
       date: date,
@@ -70,6 +124,13 @@ class IronSourceStatsRow {
           'eCPM': eCPM,
           'clicks': clicks,
           'completions': completions,
+          'appFillRate': appFillRate,
+          'completionRate': completionRate,
+          'revenuePerCompletion': revenuePerCompletion,
+          'clickThroughRate': clickThroughRate,
+          'appRequests': appRequests,
+          'dau': dau,
+          'sessions': sessions,
         },
       ],
     );
@@ -124,8 +185,8 @@ class IronSourceApiClient {
     final queryParams = <String, String>{
       'startDate': startDate,
       'endDate': endDate,
-      'metrics': metrics ?? 'revenue,impressions,eCPM,clicks,completions',
-      'breakdowns': 'date,adFormat,platform,country,app',
+      'metrics': metrics ?? 'revenue,impressions,eCPM,clicks,completions,appFillRate,completionRate,revenuePerCompletion,clickThroughRate,appRequests',
+      'breakdowns': breakdowns ?? 'date,adFormat,platform,country,app',
       if (appKey != null && appKey.isNotEmpty) 'appKey': appKey,
       if (country != null && country.isNotEmpty) 'country': country,
       if (adUnits != null && adUnits.isNotEmpty) 'adFormat': adUnits,

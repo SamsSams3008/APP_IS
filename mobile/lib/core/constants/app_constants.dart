@@ -21,4 +21,8 @@ class AppConstants {
   /// Secure storage keys (solo en dispositivo)
   static const String storageSecretKey = 'ironsource_secret_key';
   static const String storageRefreshToken = 'ironsource_refresh_token';
+  static const String storageThemeMode = 'app_theme_mode';
+  static const String storageLocale = 'app_locale';
+  static const String storageDashboardFilters = 'dashboard_filters';
+  static const String storageMetricFiltersPrefix = 'metric_filters_';
 }

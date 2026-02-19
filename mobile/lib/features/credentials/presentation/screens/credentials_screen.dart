@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/credentials_updated_notifier.dart';
+import '../../../../core/l10n/app_strings.dart';
+import '../../../../core/locale_notifier.dart';
 import '../../../../data/credentials/credentials_repository.dart';
 
 class CredentialsScreen extends StatefulWidget {
@@ -26,6 +29,11 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
     super.initState();
     _repo = CredentialsRepository();
     _loadStored();
+    LocaleNotifier.valueNotifier.addListener(_onLocaleChanged);
+  }
+
+  void _onLocaleChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadStored() async {
@@ -38,6 +46,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
 
   @override
   void dispose() {
+    LocaleNotifier.valueNotifier.removeListener(_onLocaleChanged);
     _secretKeyController.dispose();
     _refreshTokenController.dispose();
     super.dispose();
@@ -59,23 +68,40 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Claves guardadas correctamente')),
+        SnackBar(content: Text(AppStrings.t('keys_saved', LocaleNotifier.current))),
       );
+      CredentialsUpdatedNotifier.notify();
       context.go('/dashboard');
     } catch (e) {
       setState(() {
-        _errorMessage = e.toString();
+        _errorMessage = _isKeysError(e.toString())
+            ? AppStrings.t('invalid_keys_config', LocaleNotifier.current)
+            : e.toString();
         _loading = false;
       });
     }
   }
 
+  static bool _isKeysError(String error) {
+    final lower = error.toLowerCase();
+    return lower.contains('secret') ||
+        lower.contains('refresh token') ||
+        lower.contains('bearer') ||
+        lower.contains('401') ||
+        lower.contains('403') ||
+        lower.contains('unauthorized') ||
+        lower.contains('invalid credentials') ||
+        lower.contains('token');
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Claves IronSource')),
-      body: SafeArea(
-        child: SingleChildScrollView(
+    return ValueListenableBuilder<String>(
+      valueListenable: LocaleNotifier.valueNotifier,
+      builder: (context, locale, _) => Scaffold(
+        appBar: AppBar(title: Text(AppStrings.t('credentials_title', locale))),
+        body: SafeArea(
+          child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Form(
             key: _formKey,
@@ -83,9 +109,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Configura las credenciales de la Reporting API. '
-                  'En IronSource ve a Mi cuenta → My Account y copia tu '
-                  'Secret Key y Refresh Token.',
+                  AppStrings.t('config_instructions', locale),
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 24),
@@ -100,7 +124,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                   controller: _secretKeyController,
                   obscureText: _obscureSecret,
                   decoration: InputDecoration(
-                    labelText: 'Secret Key',
+                    labelText: AppStrings.t('secret_key', locale),
                     prefixIcon: const Icon(Icons.key),
                     suffixIcon: IconButton(
                       icon: Icon(
@@ -111,7 +135,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                     ),
                   ),
                   validator: (v) {
-                    if (v == null || v.trim().isEmpty) return 'Introduce la Secret Key';
+                    if (v == null || v.trim().isEmpty) return AppStrings.t('enter_secret_key', locale);
                     return null;
                   },
                 ),
@@ -120,7 +144,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                   controller: _refreshTokenController,
                   obscureText: _obscureRefresh,
                   decoration: InputDecoration(
-                    labelText: 'Refresh Token',
+                    labelText: AppStrings.t('refresh_token', locale),
                     prefixIcon: const Icon(Icons.refresh),
                     suffixIcon: IconButton(
                       icon: Icon(
@@ -131,7 +155,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                     ),
                   ),
                   validator: (v) {
-                    if (v == null || v.trim().isEmpty) return 'Introduce el Refresh Token';
+                    if (v == null || v.trim().isEmpty) return AppStrings.t('enter_refresh_token', locale);
                     return null;
                   },
                 ),
@@ -144,16 +168,61 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                           width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Guardar y continuar'),
+                      : Text(AppStrings.t('save_continue', locale)),
                 ),
                 const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () => context.push('/glossary'),
+                  icon: const Icon(Icons.menu_book_outlined),
+                  label: Text(AppStrings.t('glossary', locale)),
+                ),
+                const SizedBox(height: 12),
                 OutlinedButton(
                   onPressed: () => context.go('/dashboard'),
-                  child: const Text('Ir al dashboard'),
+                  child: Text(AppStrings.t('go_dashboard', locale)),
                 ),
+                const SizedBox(height: 32),
+                _buildLanguageSection(locale),
               ],
             ),
           ),
+        ),
+      ),
+    ),
+  );
+  }
+
+  Widget _buildLanguageSection(String locale) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.t('language', locale),
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<String>(
+              segments: [
+                ButtonSegment<String>(
+                  value: 'es',
+                  label: Text(AppStrings.t('spanish', locale)),
+                ),
+                ButtonSegment<String>(
+                  value: 'en',
+                  label: Text(AppStrings.t('english', locale)),
+                ),
+              ],
+              selected: {LocaleNotifier.current},
+              onSelectionChanged: (Set<String> selected) {
+                LocaleNotifier.set(selected.first);
+              },
+            ),
+          ],
         ),
       ),
     );

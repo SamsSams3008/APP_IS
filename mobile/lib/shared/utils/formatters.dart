@@ -32,6 +32,11 @@ String formatDecimal(double value) {
   return value.toStringAsFixed(2);
 }
 
+/// Porcentaje con 2 decimales (tablas, tooltips).
+String formatPercent(double value) {
+  return '${value.toStringAsFixed(2)}%';
+}
+
 String formatDate(DateTime date) {
   return DateFormat('dd/MM/yyyy').format(date);
 }
@@ -57,3 +62,6 @@ String formatCountry(String? code) {
   final upper = code.trim().toUpperCase();
   return _countryNames[upper] ?? upper;
 }
+
+/// Códigos de país para filtros (si la API no devuelve país, el usuario puede elegir igual).
+List<String> get countryCodesForFilter => _countryNames.keys.toList()..sort();
