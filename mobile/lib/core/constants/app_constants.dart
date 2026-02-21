@@ -2,7 +2,7 @@
 class AppConstants {
   AppConstants._();
 
-  static const String appName = 'IronSource Dashboard';
+  static const String appName = 'Ad Revenue Dashboard - For ironSource';
 
   /// Bearer API: obtener token con Secret Key + Refresh Token (Mi cuenta → My Account)
   static const String ironsourceAuthUrl =

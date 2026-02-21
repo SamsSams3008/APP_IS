@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import '../../core/constants/app_constants.dart';
 import '../credentials/credentials_repository.dart';
 
-/// Fila de estadísticas (compatible con el formato antiguo para el dashboard).
+/// Fila de estadísticas (compatible con el formato del dashboard).
 class IronSourceStatsRow {
   IronSourceStatsRow({
     this.adUnits,
@@ -26,16 +26,7 @@ class IronSourceStatsRow {
   static String? _str(Map<String, dynamic> j, String key, [String? altKey]) {
     final v = j[key] ?? (altKey != null ? j[altKey] : null);
     if (v == null) return null;
-    if (v is String) {
-      final s = v.trim();
-      return s.isEmpty ? null : s;
-    }
-    if (v is Map<String, dynamic>) {
-      final code = v['code'] ?? v['id'] ?? v['countryCode'];
-      final name = v['name'] ?? v['countryName'];
-      final s = (code is String ? code : name is String ? name : null)?.trim();
-      return (s != null && s.isNotEmpty) ? s : null;
-    }
+    if (v is String) return v.trim().isEmpty ? null : v.trim();
     final s = v.toString().trim();
     return s.isEmpty ? null : s;
   }
@@ -55,61 +46,43 @@ class IronSourceStatsRow {
     return null;
   }
 
-  /// Busca cualquier clave que contenga 'country' (case insensitive) en el JSON.
-  /// Normaliza a código ISO de 2 letras (toma los dos primeros caracteres si viene nombre largo).
   static String? _countryFromAnyKey(Map<String, dynamic> json) {
-    String? fromMap(Map<String, dynamic> m) {
-      for (final e in m.entries) {
-        if (e.key.toString().toLowerCase().contains('country')) {
-          final v = e.value;
-          if (v == null) continue;
-          final s = (v is String ? v : v.toString()).trim();
-          if (s.isEmpty) continue;
-          // Si es código de 2 letras (ej. US), devolver en mayúsculas
-          if (s.length == 2) return s.toUpperCase();
-          // Si es nombre largo (ej. "United States"), devolver tal cual para que formatCountry pueda no reconocerlo y mostrar el código
-          if (s.length > 2 && s.length <= 3) return s.toUpperCase();
-          return s;
-        }
+    for (final e in json.entries) {
+      if (e.key.toString().toLowerCase().contains('country') && e.value != null) {
+        final s = (e.value is String ? e.value : e.value.toString()).toString().trim();
+        if (s.isNotEmpty && s.length >= 2) return s.substring(0, 2).toUpperCase();
       }
-      return null;
     }
-    var v = fromMap(json);
-    if (v != null) return v;
-    final dims = json['dimensions'];
-    if (dims is Map<String, dynamic>) return fromMap(dims);
     return null;
   }
 
-  static double _num(Map<String, dynamic> j, String key, [String? alt]) {
-    final v = j[key] ?? (alt != null ? j[alt] : null);
+  static double _num(Map<String, dynamic> j, String k, [String? alt]) {
+    final v = j[k] ?? (alt != null ? j[alt] : null);
     if (v is num) return v.toDouble();
     if (v is String) return double.tryParse(v) ?? 0;
     return 0;
   }
 
-  /// Desde la API v1 (LevelPlay): cada item de data es una fila plana.
+  /// Respuesta API: objetos planos. Usamos revenue directo de la API.
   static IronSourceStatsRow fromReportingV1Row(Map<String, dynamic> json) {
     final adFormat = _strFrom(json, ['adFormat', 'adUnits', 'adUnit']);
     final date = _strFrom(json, ['date', 'day']);
     final platform = _strFrom(json, ['platform', 'os']);
-    final country = _strFrom(json, ['country', 'countryCode', 'country_iso', 'country_code', 'countryId', 'country_name']) ?? _countryFromAnyKey(json);
+    final country = _strFrom(json, ['country', 'countryCode', 'country_iso', 'country_code', 'countryName']) ?? _countryFromAnyKey(json);
     final app = _strFrom(json, ['app', 'appKey', 'applicationKey', 'application_key']);
     final revenue = _num(json, 'revenue');
-    final impressions = (_num(json, 'impressions')).toInt();
+    final impressions = _num(json, 'impressions').toInt();
     final eCPM = _num(json, 'eCPM', 'ecpm');
     final clicks = _num(json, 'clicks').toInt();
     final completions = _num(json, 'completions').toInt();
     final appFillRate = _num(json, 'appFillRate', 'appFillRate');
-    final completionRate = _num(json, 'completionRate', 'completionRate');
+    final completionRate = _num(json, 'completionRate') > 0 ? _num(json, 'completionRate') : _num(json, 'completionRateImpBased');
     final revenuePerCompletion = _num(json, 'revenuePerCompletion', 'revenuePerCompletion');
     final clickThroughRate = _num(json, 'clickThroughRate', 'ctr');
     final appRequests = _num(json, 'appRequests', 'appRequests').toInt();
-    // API usa "activeUsers" (DAU); ver https://developers.is.com/ironsource-mobile/air/metrics-definition/
-    var dauVal = _num(json, 'activeUsers');
-    if (dauVal == 0) dauVal = _num(json, 'dau');
-    if (dauVal == 0) dauVal = _num(json, 'dailyActiveUsers');
-    final dau = dauVal.toInt();
+    var dau = _num(json, 'activeUsers').toInt();
+    if (dau == 0) dau = _num(json, 'dau').toInt();
+    if (dau == 0) dau = _num(json, 'dailyActiveUsers').toInt();
     final sessions = _num(json, 'sessions').toInt();
     return IronSourceStatsRow(
       adUnits: adFormat,
@@ -147,7 +120,6 @@ class IronSourceApiClient {
   final CredentialsRepository _credentials;
   final http.Client _client;
 
-  /// Obtiene un Bearer token con Secret Key + Refresh Token (doc IronSource).
   Future<String> _getBearerToken() async {
     final creds = await _credentials.getCredentials();
     if (creds == null) throw Exception('Configura Secret Key y Refresh Token en Ajustes.');
@@ -170,56 +142,56 @@ class IronSourceApiClient {
   }
 
   /// LevelPlay Reporting API v1 (Bearer). Devuelve filas en formato compatible con el dashboard.
+  /// Con breakdowns: 'date' + filtros vía query params los totales coinciden con IronSource.
   Future<List<IronSourceStatsRow>> getStats({
     required String startDate,
     required String endDate,
     String? appKey,
     String? country,
     String? adUnits,
+    String? platform,
     String? breakdowns,
     String? metrics,
   }) async {
     final token = await _getBearerToken();
-
-    // LevelPlay v1: breakdowns son date, adFormat, platform, country, app
-    final queryParams = <String, String>{
-      'startDate': startDate,
-      'endDate': endDate,
-      'metrics': metrics ?? 'revenue,impressions,eCPM,clicks,completions,appFillRate,completionRate,revenuePerCompletion,clickThroughRate,appRequests',
-      'breakdowns': breakdowns ?? 'date,adFormat,platform,country,app',
-      if (appKey != null && appKey.isNotEmpty) 'appKey': appKey,
-      if (country != null && country.isNotEmpty) 'country': country,
-      if (adUnits != null && adUnits.isNotEmpty) 'adFormat': adUnits,
-    };
-
-    final uri = Uri.parse(AppConstants.ironsourceReportingV1Url).replace(
-      queryParameters: queryParams,
-    );
-
-    final response = await _client.get(
-      uri,
-      headers: {'Authorization': 'Bearer $token'},
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('IronSource Reporting: ${response.statusCode} ${response.body}');
+    const resultsPerPage = 5000;
+    const defaultMetrics = 'revenue,impressions,eCPM,clicks,completions,appFillRate,completionRateImpBased,revenuePerCompletion,clickThroughRate,appRequests,activeUsers,sessions';
+    final allRows = <IronSourceStatsRow>[];
+    var page = 1;
+    while (true) {
+      final queryParams = <String, String>{
+        'startDate': startDate,
+        'endDate': endDate,
+        'metrics': metrics ?? defaultMetrics,
+        'breakdowns': breakdowns ?? 'date',
+        'page': page.toString(),
+        'resultsPerPage': resultsPerPage.toString(),
+        if (appKey != null && appKey.isNotEmpty) 'appKey': appKey,
+        if (country != null && country.isNotEmpty) 'country': country,
+        if (adUnits != null && adUnits.isNotEmpty) 'adFormat': adUnits,
+        if (platform != null && platform.isNotEmpty) 'platform': platform,
+      };
+      final uri = Uri.parse(AppConstants.ironsourceReportingV1Url).replace(queryParameters: queryParams);
+      final response = await _client.get(uri, headers: {'Authorization': 'Bearer $token'});
+      if (response.statusCode != 200) {
+        throw Exception('IronSource Reporting: ${response.statusCode} ${response.body}');
+      }
+      final body = json.decode(response.body) as Map<String, dynamic>?;
+      final dataList = body?['data'] as List<dynamic>?;
+      if (dataList == null || dataList.isEmpty) break;
+      final rows = dataList
+          .map((e) => IronSourceStatsRow.fromReportingV1Row(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      allRows.addAll(rows);
+      if (rows.length < resultsPerPage) break;
+      page++;
     }
-
-    final body = json.decode(response.body) as Map<String, dynamic>?;
-    final dataList = body?['data'] as List<dynamic>?;
-    if (dataList == null) return [];
-
-    return dataList
-        .map((e) => IronSourceStatsRow.fromReportingV1Row(
-              Map<String, dynamic>.from(e as Map),
-            ))
-        .toList();
+    return allRows;
   }
 
   static const String _applicationsV3Url =
       'https://platform.ironsrc.com/partners/publisher/applications/v3';
 
-  /// Lista de aplicaciones (Bearer). Prueba v6; si 404, intenta v3.
   Future<List<IronSourceApp>> getApplications() async {
     final token = await _getBearerToken();
     final headers = {'Authorization': 'Bearer $token'};
@@ -234,9 +206,13 @@ class IronSourceApiClient {
     if (body is List) {
       list = body;
     } else if (body is Map<String, dynamic>) {
-      if (body['applications'] is List) list = body['applications'] as List;
-      else if (body['data'] is List) list = body['data'] as List;
-      else list = [body];
+      if (body['applications'] is List) {
+        list = body['applications'] as List;
+      } else if (body['data'] is List) {
+        list = body['data'] as List;
+      } else {
+        list = [body];
+      }
     }
     return list
         .map((e) => IronSourceApp.fromJson(Map<String, dynamic>.from(e as Map)))

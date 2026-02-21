@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/credentials_updated_notifier.dart';
-import '../../../../core/constants/app_constants.dart';
 import '../../../../core/l10n/app_strings.dart';
 import '../../../../core/locale_notifier.dart';
 import '../../../../core/theme/theme_mode_notifier.dart';
@@ -14,6 +13,8 @@ import '../../../../shared/widgets/stat_card.dart';
 import '../../data/dashboard_repository.dart';
 import '../../domain/dashboard_filters.dart';
 import '../../domain/dashboard_stats.dart';
+
+double _rev(Map<String, dynamic> d) => (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0;
 
 /// metricId para navegar a la pantalla de detalle de cada métrica.
 const Map<String, String> _statCardMetricIds = {
@@ -46,13 +47,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DashboardStats? _stats;
   List<IronSourceStatsRow> _rawRows = [];
   List<IronSourceApp> _apps = [];
+  List<IronSourceStatsRow> _filterMetadataRows = [];
   bool _loading = true;
   String? _error;
 
-  // Cache: una petición por rango de fechas; filtros en memoria
+  // Cache: por fechas + filtros (se envían a la API)
   List<IronSourceStatsRow> _cachedRawRows = [];
   String? _cachedStartDate;
   String? _cachedEndDate;
+  String? _cachedFilterKey;
 
   @override
   void initState() {
@@ -67,9 +70,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadSavedFiltersAndCheckCredentials() async {
-    final saved = await DashboardFilters.loadDashboard();
     if (mounted) {
-      setState(() => _filters = saved);
+      setState(() => _filters = DashboardFilters.last7Days());
       await _checkCredentials();
     }
   }
@@ -78,7 +80,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void dispose() {
     ThemeModeNotifier.valueNotifier.removeListener(_onThemeChanged);
     CredentialsUpdatedNotifier.instance.removeListener(_onCredentialsUpdated);
-    _saveFilters();
     super.dispose();
   }
 
@@ -91,8 +92,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _onFiltersChanged() {
-    _applyFiltersFromCache();
-    _saveFilters();
+    _load(); // Refetch: filtros se envían a la API
   }
 
   Future<void> _checkCredentials() async {
@@ -105,43 +105,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _load();
   }
 
+  /// Cache válido si fechas y filtros coinciden (los filtros se envían a la API).
   bool get _isCacheValid =>
       _cachedStartDate == _filters.startDateStr &&
       _cachedEndDate == _filters.endDateStr &&
+      _cachedFilterKey == _filterKey &&
       _cachedRawRows.isNotEmpty;
 
-  bool _listNotEmpty(List<String>? l) => l != null && l.isNotEmpty;
+  String get _filterKey =>
+      '${_filters.appKeys?.join(',') ?? ''}|${_filters.countries?.join(',') ?? ''}|${_filters.adUnits?.join(',') ?? ''}|${_filters.platforms?.join(',') ?? ''}';
 
-  /// Filtra en memoria: aplica todos los filtros (múltiples valores por dimensión).
+  /// Con breakdowns: 'date' los filtros se envían a la API; no hay filtrado client-side.
   void _applyFiltersFromCache() {
     if (_cachedRawRows.isEmpty) return;
-    final filtered = _cachedRawRows.where((row) {
-      if (_listNotEmpty(_filters.appKeys) && !_filters.appKeys!.contains((row.appKey ?? '').trim())) return false;
-      if (_listNotEmpty(_filters.adUnits) && !_adUnitMatchesAny(row.adUnits, _filters.adUnits!)) return false;
-      if (_listNotEmpty(_filters.countries) && !_filters.countries!.contains((row.country ?? '').trim().toUpperCase())) return false;
-      if (_listNotEmpty(_filters.platforms) && !_filters.platforms!.contains((row.platform ?? '').trim().toLowerCase())) return false;
-      return true;
-    }).toList();
-    _rawRows = filtered;
-    _stats = DashboardRepository.statsFromRows(filtered);
+    _rawRows = _cachedRawRows;
+    _stats = DashboardRepository.statsFromRows(_cachedRawRows);
     setState(() {});
-  }
-
-  bool _adUnitMatchesAny(String? rowAdUnit, List<String> filterAdUnits) {
-    if (rowAdUnit == null) return false;
-    for (final f in filterAdUnits) {
-      if (_adUnitMatches(rowAdUnit, f)) return true;
-    }
-    return false;
-  }
-
-  bool _adUnitMatches(String? rowAdUnit, String filterAdUnit) {
-    if (rowAdUnit == null) return false;
-    final normalized = rowAdUnit.toLowerCase().replaceAll(' ', '');
-    final f = filterAdUnit.toLowerCase().trim();
-    return normalized.contains(f) || f.contains(normalized) ||
-        (f == 'rewardedvideo' && normalized.contains('rewarded')) ||
-        (f == 'offerwall' && normalized.contains('offer'));
   }
 
   Future<void> _saveFilters() async {
@@ -158,7 +137,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _error = null;
     });
     try {
-      final full = await _repo.getStatsRawFull(_filters.startDateStr, _filters.endDateStr);
+      final dateFilters = DashboardFilters(
+        startDate: _filters.startDate,
+        endDate: _filters.endDate,
+        datePreset: _filters.datePreset,
+      );
+      final full = await _repo.getStatsRaw(_filters);
+      final metadataFuture = _repo.getFilterMetadata(dateFilters);
       if (_apps.isEmpty) {
         try {
           _apps = await _repo.getApplications();
@@ -168,7 +153,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _cachedRawRows = full;
       _cachedStartDate = _filters.startDateStr;
       _cachedEndDate = _filters.endDateStr;
+      _cachedFilterKey = _filterKey;
       _applyFiltersFromCache();
+      try {
+        _filterMetadataRows = await metadataFuture;
+      } catch (_) {}
+      if (!mounted) return;
       setState(() => _loading = false);
     } catch (e) {
       if (mounted) {
@@ -214,7 +204,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           datePreset: DateRangePreset.custom,
         );
       });
-      _saveFilters();
       _load();
     }
   }
@@ -250,7 +239,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         datePreset: preset,
       );
     });
-    _saveFilters();
     _load();
   }
 
@@ -259,6 +247,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final locale = LocaleNotifier.current;
     return Scaffold(
       appBar: AppBar(
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Theme.of(context).colorScheme.surface,
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+              ],
+            ),
+          ),
+        ),
         leading: IconButton(
           icon: Icon(
             ThemeModeNotifier.current == ThemeMode.light ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
@@ -270,7 +270,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           },
           tooltip: ThemeModeNotifier.current == ThemeMode.light ? AppStrings.t('dark_mode', locale) : AppStrings.t('light_mode', locale),
         ),
-        title: const Text(AppConstants.appName),
+        title: Text(AppStrings.t('dashboard_tab', LocaleNotifier.current)),
         actions: [
           IconButton(
             icon: const Icon(Icons.menu_book_outlined),
@@ -396,10 +396,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           SizedBox(width: compact ? 4 : 8),
           _presetChip('90d', DateRangePreset.last90, compact),
           SizedBox(width: compact ? 4 : 8),
-          ActionChip(
+          FilterChip(
             label: Text(compact ? AppStrings.t('filter_date', LocaleNotifier.current) : AppStrings.t('filter_custom', LocaleNotifier.current)),
-            onPressed: _pickDateRange,
+            selected: _filters.datePreset == DateRangePreset.custom,
+            onSelected: (_) => _pickDateRange(),
             avatar: Icon(Icons.calendar_today, size: compact ? 14 : 18),
+            selectedColor: Theme.of(context).colorScheme.primaryContainer,
+            checkmarkColor: Theme.of(context).colorScheme.primary,
+            showCheckmark: true,
             padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12, vertical: compact ? 4 : 8),
             visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
           ),
@@ -427,7 +431,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => context.push('/dashboard/metric/$id'),
+        onTap: () async {
+          await _saveFilters();
+          if (!context.mounted) return;
+          context.push('/dashboard/metric/$id');
+        },
         borderRadius: BorderRadius.circular(16),
         child: StatCard(
           title: title,
@@ -450,13 +458,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (s.completions != null)
         _wrapMetricCard(AppStrings.t('completions', l), formatNumber(s.completions!), Icons.check_circle, 'completions'),
       if (s.fillRate != null && s.fillRate! > 0)
-        _wrapMetricCard(AppStrings.t('fill_rate', l), '${s.fillRate!.toStringAsFixed(2)}%', Icons.pie_chart_outline, 'fill_rate'),
+        _wrapMetricCard(AppStrings.t('fill_rate', l), '${formatDecimal(s.fillRate!)}%', Icons.pie_chart_outline, 'fill_rate'),
       if (s.completionRate != null && s.completionRate! > 0)
-        _wrapMetricCard(AppStrings.t('completion_rate', l), '${s.completionRate!.toStringAsFixed(2)}%', Icons.done_all, 'completion_rate'),
+        _wrapMetricCard(AppStrings.t('completion_rate', l), '${formatDecimal(s.completionRate!)}%', Icons.done_all, 'completion_rate'),
       if (s.revenuePerCompletion != null && s.revenuePerCompletion! > 0)
         _wrapMetricCard(AppStrings.t('revenue_per_completion', l), formatMoney(s.revenuePerCompletion!), Icons.monetization_on_outlined, 'revenue_per_completion'),
       if (s.ctr != null && s.ctr! > 0)
-        _wrapMetricCard(AppStrings.t('ctr', l), '${s.ctr!.toStringAsFixed(2)}%', Icons.ads_click, 'ctr'),
+        _wrapMetricCard(AppStrings.t('ctr', l), '${formatDecimal(s.ctr!)}%', Icons.ads_click, 'ctr'),
       if (s.appRequests != null && s.appRequests! > 0)
         _wrapMetricCard(AppStrings.t('app_requests', l), formatNumber(s.appRequests!), Icons.sync, 'app_requests'),
       if (s.dau != null && s.dau! > 0)
@@ -470,18 +478,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
       crossAxisCount: crossCount,
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
-      childAspectRatio: width > 600 ? 1.5 : 1.35,
+      childAspectRatio: width > 600 ? 1.5 : 1.25,
       children: cards,
     );
   }
 
-  /// Lista de países con ingresos (nombres con formatCountry).
+  /// Filas de metadata filtradas por los filtros actuales (para tabla por país).
+  List<IronSourceStatsRow> get _filteredMetadataRows {
+    if (_filterMetadataRows.isEmpty) return [];
+    final appKeys = _filters.appKeys;
+    final countries = _filters.countries;
+    final adUnits = _filters.adUnits;
+    final platforms = _filters.platforms;
+    final hasApp = appKeys != null && appKeys.isNotEmpty;
+    final hasCountry = countries != null && countries.isNotEmpty;
+    final hasAdUnit = adUnits != null && adUnits.isNotEmpty;
+    final hasPlatform = platforms != null && platforms.isNotEmpty;
+    if (!hasApp && !hasCountry && !hasAdUnit && !hasPlatform) return _filterMetadataRows;
+    return _filterMetadataRows.where((row) {
+      if (hasApp && !appKeys.contains((row.appKey ?? '').trim())) return false;
+      if (hasCountry && !countries.contains((row.country ?? '').trim().toUpperCase())) return false;
+      if (hasPlatform && !platforms.contains((row.platform ?? '').trim().toLowerCase())) return false;
+      if (hasAdUnit) {
+        final rowAd = (row.adUnits ?? '').toLowerCase();
+        final matches = adUnits.any((f) => rowAd.contains(f.toLowerCase()) || f.toLowerCase().contains(rowAd) || (f == 'rewardedVideo' && rowAd.contains('rewarded')) || (f == 'offerWall' && rowAd.contains('offer')));
+        if (!matches) return false;
+      }
+      return true;
+    }).toList();
+  }
+
   List<Map<String, dynamic>> _aggregateByCountry() {
     final byCountry = <String, Map<String, dynamic>>{};
-    for (final row in _rawRows) {
+    for (final row in _filteredMetadataRows) {
       final countryKey = (row.country ?? '').trim().isEmpty ? '__all__' : (row.country!.trim().toUpperCase());
       for (final d in row.data ?? []) {
-        final rev = (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0.0;
+        final rev = _rev(d);
         final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
         if (!byCountry.containsKey(countryKey)) {
           byCountry[countryKey] = {'revenue': 0.0, 'impressions': 0};
@@ -493,7 +525,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return byCountry.entries
         .map((e) => {
               'countryCode': e.key == '__all__' ? null : e.key,
-              'revenue': (e.value['revenue'] as num).toDouble(),
+              'revenue': e.value['revenue'] as num,
               'impressions': e.value['impressions'] as int,
             })
         .toList()
@@ -502,9 +534,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildCountriesSection() {
     final byCountry = _aggregateByCountry();
+    final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
@@ -512,8 +546,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+              cs.primary.withValues(alpha: 0.1),
+              cs.tertiary.withValues(alpha: 0.06),
             ],
           ),
         ),
@@ -523,8 +557,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.public, color: Theme.of(context).colorScheme.tertiary, size: 22),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.public, color: Theme.of(context).colorScheme.tertiary, size: 20),
+                ),
+                const SizedBox(width: 10),
                 Text(
                   AppStrings.t('by_country', LocaleNotifier.current),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -534,6 +575,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const SizedBox(height: 16),
+            if (byCountry.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'Puede haber discrepancias de centésimas en esta tabla.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontSize: 10,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
+                ),
+              ),
             if (byCountry.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -656,9 +708,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   /// Lista unificada: countryCodesForFilter + países que aparecen en los datos.
+  /// Con breakdowns: 'date' las filas no tienen country; usamos _filterMetadataRows.
   List<String> get _countryFilterOptions {
     final base = countryCodesForFilter.toSet();
-    for (final row in _rawRows) {
+    for (final row in _filterMetadataRows) {
       final c = (row.country ?? '').trim().toUpperCase();
       if (c.isNotEmpty) base.add(c);
     }
@@ -667,9 +720,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildFiltersSection() {
     final isWide = MediaQuery.of(context).size.width > 700;
+    final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
@@ -677,8 +732,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+              cs.primary.withValues(alpha: 0.12),
+              cs.tertiary.withValues(alpha: 0.06),
             ],
           ),
         ),
@@ -688,8 +743,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.filter_list, color: Theme.of(context).colorScheme.primary, size: 22),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.filter_list, color: Theme.of(context).colorScheme.primary, size: 20),
+                ),
+                const SizedBox(width: 10),
                 Text(
                   AppStrings.t('filters', LocaleNotifier.current),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -923,14 +985,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Agrupa por fecha: todas las métricas del glosario (API + calculadas).
   List<Map<String, dynamic>> _aggregateRowsByDate() {
     final byDate = <String, Map<String, dynamic>>{};
     for (final row in _rawRows) {
       final date = row.date ?? '';
       if (date.isEmpty) continue;
       for (final d in row.data ?? []) {
-        final rev = (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0.0;
+        final rev = _rev(d);
         final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
         final clk = (d['clicks'] is num) ? (d['clicks'] as num).toInt() : 0;
         final comp = (d['completions'] is num) ? (d['completions'] as num).toInt() : 0;
@@ -990,14 +1051,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'sessions': (v['sessions'] as int) > 0 ? v['sessions'] : null,
       };
     }).toList();
-    list.sort((a, b) => (a['date'] as String).compareTo(b['date'] as String));
+    list.sort((a, b) => (b['date'] as String).compareTo(a['date'] as String));
     return list;
   }
 
   List<DataRow> _dataTableRows(List<Map<String, dynamic>> aggregated) {
     return aggregated.map((r) {
       final dateStr = r['date'] as String;
-      final revenue = (r['revenue'] as num).toDouble();
       final impressions = r['impressions'] as int;
       final ecpm = (r['eCPM'] as num).toDouble();
       final clicks = r['clicks'] as int;
@@ -1012,7 +1072,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return DataRow(
         cells: [
           DataCell(Tooltip(message: dateStr, child: Text(dateStr))),
-          DataCell(_cell(formatMoney(revenue))),
+          DataCell(_cell(formatMoney((r['revenue'] as num).toDouble()))),
           DataCell(_cell(formatNumber(impressions))),
           DataCell(_cell(formatMoney(ecpm))),
           DataCell(_cell(formatNumber(clicks))),
@@ -1029,7 +1089,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }).toList();
   }
 
-  Widget _cell(String text) => Tooltip(message: text, child: Text(text, overflow: TextOverflow.ellipsis));
+  Widget _cell(String text) => Tooltip(message: text, child: SelectableText(text));
 
   Widget _buildDataTable(double width) {
     if (_rawRows.isEmpty) {
@@ -1043,9 +1103,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
     final aggregated = _aggregateRowsByDate();
+    final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
@@ -1053,8 +1115,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+              cs.primary.withValues(alpha: 0.1),
+              cs.tertiary.withValues(alpha: 0.05),
             ],
           ),
         ),
@@ -1064,8 +1126,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.table_chart, color: Theme.of(context).colorScheme.primary, size: 22),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.table_chart, color: cs.primary, size: 20),
+                ),
+                const SizedBox(width: 10),
                 Text(
                   AppStrings.t('totals_by_day', LocaleNotifier.current),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -1079,7 +1148,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               scrollDirection: Axis.horizontal,
               child: DataTable(
                 headingRowColor: WidgetStateProperty.all(
-                  Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
                 ),
                 dataRowColor: WidgetStateProperty.resolveWith((states) => null),
                 decoration: BoxDecoration(

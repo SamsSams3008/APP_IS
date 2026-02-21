@@ -7,7 +7,6 @@ String formatMoney(double value) {
   return _currency.format(value);
 }
 
-/// Para ejes de gráficas: redondeado a 2 decimales y compacto (ej. 1.23K, $5.67).
 String formatMoneyChart(double value) {
   if (value.abs() >= 1000) {
     return '\$${(value / 1000).toStringAsFixed(2)}K';
@@ -20,19 +19,16 @@ String formatNumber(int value) {
   return value.toString();
 }
 
-/// Para ejes de gráficas: números redondeados a 2 decimales y compactos.
 String formatNumberChart(int value) {
-  if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(2)}M';
-  if (value >= 1000) return '${(value / 1000).toStringAsFixed(2)}K';
+  if (value >= 1000000) return '${(value / 1000000).toString()}M';
+  if (value >= 1000) return '${(value / 1000).toString()}K';
   return value.toString();
 }
 
-/// Cualquier número mostrado con exactamente 2 decimales (tablas, tooltips).
 String formatDecimal(double value) {
   return value.toStringAsFixed(2);
 }
 
-/// Porcentaje con 2 decimales (tablas, tooltips).
 String formatPercent(double value) {
   return '${value.toStringAsFixed(2)}%';
 }

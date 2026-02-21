@@ -1,3 +1,4 @@
+import '../domain/dashboard_filters.dart';
 import '../domain/dashboard_stats.dart';
 import '../../../data/ironsource/ironsource_api_client.dart';
 
@@ -7,42 +8,30 @@ class DashboardRepository {
 
   final IronSourceApiClient _api;
 
-  static double _num(Map<String, dynamic> d, String k) =>
+  static double _n(Map<String, dynamic> d, String k) =>
       (d[k] is num) ? (d[k] as num).toDouble() : 0;
 
-  /// Calcula estadísticas agregadas a partir de filas crudas.
+  /// Agregación sin redondeos intermedios. Solo redondear al mostrar.
   static DashboardStats statsFromRows(List<IronSourceStatsRow> rows) {
-    double revenue = 0;
-    int impressions = 0;
-    int clicks = 0;
-    int completions = 0;
-    double fillRateSum = 0;
-    int fillRateCount = 0;
-    double completionRateSum = 0;
-    int completionRateCount = 0;
-    double revPerCompSum = 0;
-    int revPerCompCount = 0;
-    double ctrSum = 0;
-    int ctrCount = 0;
-    int appRequests = 0;
-    int dau = 0;
-    int sessions = 0;
+    double revenue = 0, fillRateSum = 0, completionRateSum = 0, revPerCompSum = 0, ctrSum = 0;
+    int impressions = 0, clicks = 0, completions = 0, appRequests = 0, dau = 0, sessions = 0;
+    int fillRateCount = 0, completionRateCount = 0, revPerCompCount = 0, ctrCount = 0;
     for (final row in rows) {
       for (final d in row.data ?? []) {
-        revenue += _num(d, 'revenue');
-        impressions += _num(d, 'impressions').toInt();
-        clicks += _num(d, 'clicks').toInt();
-        completions += _num(d, 'completions').toInt();
-        appRequests += _num(d, 'appRequests').toInt();
-        dau += _num(d, 'dau').toInt();
-        sessions += _num(d, 'sessions').toInt();
-        final fr = _num(d, 'appFillRate');
+        revenue += _n(d, 'revenue');
+        impressions += _n(d, 'impressions').toInt();
+        clicks += _n(d, 'clicks').toInt();
+        completions += _n(d, 'completions').toInt();
+        appRequests += _n(d, 'appRequests').toInt();
+        dau += _n(d, 'dau').toInt();
+        sessions += _n(d, 'sessions').toInt();
+        final fr = _n(d, 'appFillRate');
         if (fr > 0) { fillRateSum += fr; fillRateCount++; }
-        final cr = _num(d, 'completionRate');
+        final cr = _n(d, 'completionRate');
         if (cr > 0) { completionRateSum += cr; completionRateCount++; }
-        final rpc = _num(d, 'revenuePerCompletion');
+        final rpc = _n(d, 'revenuePerCompletion');
         if (rpc > 0) { revPerCompSum += rpc; revPerCompCount++; }
-        final ctr = _num(d, 'clickThroughRate');
+        final ctr = _n(d, 'clickThroughRate');
         if (ctr > 0) { ctrSum += ctr; ctrCount++; }
       }
     }
@@ -63,17 +52,61 @@ class DashboardRepository {
     );
   }
 
-  /// Pide todos los datos del rango de fechas (máximas métricas y breakdowns para filtrar en memoria).
-  Future<List<IronSourceStatsRow>> getStatsRawFull(String startDate, String endDate) async {
+  /// Obtiene stats. Con breakdowns: 'date' + filtros vía API los totales coinciden con IronSource.
+  Future<List<IronSourceStatsRow>> getStatsRaw(DashboardFilters filters) async {
+    final appKey = _join(filters.appKeys);
+    final country = _join(filters.countries);
+    final adUnits = _mapAdFormatForApi(_join(filters.adUnits));
+    final platform = _platformParam(filters.platforms);
     return _api.getStats(
-      startDate: startDate,
-      endDate: endDate,
+      startDate: filters.startDateStr,
+      endDate: filters.endDateStr,
+      appKey: appKey,
+      country: country,
+      adUnits: adUnits,
+      platform: platform,
+      breakdowns: 'date',
+      metrics: null,
+    );
+  }
+
+  /// Llamada con breakdowns completos solo para obtener dimensiones (países, etc).
+  /// No usar para stats (hay drift por redondeo). Solo para opciones de filtros.
+  Future<List<IronSourceStatsRow>> getFilterMetadata(DashboardFilters filters) async {
+    return _api.getStats(
+      startDate: filters.startDateStr,
+      endDate: filters.endDateStr,
       appKey: null,
       country: null,
       adUnits: null,
+      platform: null,
       breakdowns: 'date,adFormat,platform,country,app',
-      metrics: 'revenue,impressions,eCPM,clicks,completions,appFillRate,completionRate,revenuePerCompletion,clickThroughRate,appRequests,activeUsers,sessions',
+      metrics: 'revenue,impressions',
     );
+  }
+
+  static String? _mapAdFormatForApi(String? adFormatCsv) {
+    if (adFormatCsv == null || adFormatCsv.isEmpty) return null;
+    final mapped = adFormatCsv.split(',').map((s) {
+      final t = s.trim().toLowerCase();
+      if (t == 'rewardedvideo') return 'rewarded';
+      if (t == 'offerwall') return 'offerwall';
+      if (t == 'interstitial') return 'interstitial';
+      if (t == 'banner') return 'banner';
+      return s.trim();
+    }).where((s) => s.isNotEmpty).toList();
+    return mapped.isEmpty ? null : mapped.join(',');
+  }
+
+  static String? _join(List<String>? list) {
+    if (list == null || list.isEmpty) return null;
+    return list.join(',');
+  }
+
+  static String? _platformParam(List<String>? platforms) {
+    if (platforms == null || platforms.isEmpty) return null;
+    if (platforms.length == 2) return null;
+    return platforms.single.toLowerCase();
   }
 
   Future<List<IronSourceApp>> getApplications() async {

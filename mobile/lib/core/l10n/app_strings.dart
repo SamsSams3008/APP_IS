@@ -3,7 +3,8 @@ class AppStrings {
   AppStrings._();
 
   static const Map<String, Map<String, String>> _strings = {
-    'app_name': {'es': 'IronSource Dashboard', 'en': 'IronSource Dashboard'},
+    'app_name': {'es': 'Ad Revenue Dashboard - For ironSource', 'en': 'Ad Revenue Dashboard - For ironSource'},
+    'dashboard_tab': {'es': 'Dashboard', 'en': 'Dashboard'},
     'settings': {'es': 'Ajustes', 'en': 'Settings'},
     'credentials_title': {'es': 'Claves IronSource', 'en': 'IronSource Keys'},
     'language': {'es': 'Idioma', 'en': 'Language'},

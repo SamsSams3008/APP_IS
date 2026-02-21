@@ -33,7 +33,7 @@ class _AppState extends State<App> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'IronSource Dashboard',
+      title: 'Ad Revenue Dashboard - For ironSource',
       debugShowCheckedModeBanner: false,
       locale: LocaleNotifier.locale,
       theme: AppTheme.light,

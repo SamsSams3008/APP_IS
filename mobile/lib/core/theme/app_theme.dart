@@ -1,29 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Paleta: tema claro (fondos claros) y tema oscuro (slate + teal).
+/// Paleta: tema claro y oscuro en azul navy.
 class AppTheme {
   AppTheme._();
 
   // --- Tema oscuro
-  static const Color _bg = Color(0xFF0F1419);
-  static const Color _surface = Color(0xFF1A2129);
-  static const Color _surfaceVariant = Color(0xFF252D36);
-  static const Color _primary = Color(0xFF0D9488);
-  static const Color _primaryVariant = Color(0xFF14B8A6);
-  static const Color _accent = Color(0xFFF59E0B);
-  static const Color _onBg = Color(0xFFE2E8F0);
-  static const Color _onSurfaceVariant = Color(0xFF94A3B8);
+  static const Color _bg = Color(0xFF0D1117);
+  static const Color _surface = Color(0xFF161B22);
+  static const Color _surfaceVariant = Color(0xFF21262D);
+  static const Color _primary = Color(0xFF388BFD);
+  static const Color _primaryVariant = Color(0xFF58A6FF);
+  static const Color _accent = Color(0xFF79C0FF);
+  static const Color _onBg = Color(0xFFE6EDF3);
+  static const Color _onSurfaceVariant = Color(0xFF8B949E);
   static const Color _error = Color(0xFFF87171);
 
   // --- Tema claro
-  static const Color _lightBg = Color(0xFFF8FAFC);
+  static const Color _lightBg = Color(0xFFF6F8FA);
   static const Color _lightSurface = Color(0xFFFFFFFF);
-  static const Color _lightSurfaceVariant = Color(0xFFF1F5F9);
-  static const Color _lightOnBg = Color(0xFF0F172A);
-  static const Color _lightOnSurfaceVariant = Color(0xFF64748B);
+  static const Color _lightSurfaceVariant = Color(0xFFE8EDF4);
+  static const Color _lightOnBg = Color(0xFF0D1117);
+  static const Color _lightOnSurfaceVariant = Color(0xFF57606A);
 
-  /// Tema claro: fondos claros, texto oscuro, acentos teal.
+  /// Tema claro: fondos claros, acentos azul navy.
   static ThemeData get light {
     return ThemeData(
       useMaterial3: true,
@@ -31,8 +31,8 @@ class AppTheme {
       colorScheme: ColorScheme.light(
         primary: _primary,
         onPrimary: Colors.white,
-        primaryContainer: _primary.withValues(alpha: 0.15),
-        onPrimaryContainer: const Color(0xFF0F766E),
+        primaryContainer: _primary.withValues(alpha: 0.22),
+        onPrimaryContainer: const Color(0xFF0D419D),
         secondary: _primaryVariant,
         onSecondary: Colors.white,
         tertiary: _accent,
@@ -80,16 +80,24 @@ class AppTheme {
       ),
       chipTheme: ChipThemeData(
         backgroundColor: _lightSurfaceVariant,
-        selectedColor: _primary.withValues(alpha: 0.2),
+        selectedColor: _primary.withValues(alpha: 0.35),
         labelStyle: const TextStyle(color: _lightOnBg),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: _primary,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
       ),
       dividerColor: _lightOnSurfaceVariant.withValues(alpha: 0.4),
     );
   }
 
-  /// Tema oscuro: slate + teal.
+  /// Tema oscuro: fondos navy oscuros, acentos azul.
   static ThemeData get dark {
     return ThemeData(
       useMaterial3: true,
@@ -146,10 +154,18 @@ class AppTheme {
       ),
       chipTheme: ChipThemeData(
         backgroundColor: _surfaceVariant,
-        selectedColor: _primary.withValues(alpha: 0.3),
+        selectedColor: _primary.withValues(alpha: 0.4),
         labelStyle: const TextStyle(color: _onBg),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: _primary,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
       ),
       dividerColor: _onSurfaceVariant.withValues(alpha: 0.3),
     );

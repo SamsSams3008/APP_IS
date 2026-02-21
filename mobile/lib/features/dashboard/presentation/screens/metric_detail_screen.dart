@@ -13,6 +13,13 @@ import '../../../glossary/glossary_data.dart';
 import '../../data/dashboard_repository.dart';
 import '../../domain/dashboard_filters.dart';
 
+double _revNum(Object? v) {
+  if (v == null) return 0;
+  if (v is num) return v.toDouble();
+  if (v is String) return double.tryParse(v) ?? 0;
+  return 0;
+}
+
 class MetricDetailScreen extends StatefulWidget {
   const MetricDetailScreen({super.key, required this.metricId});
 
@@ -29,12 +36,14 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   DashboardFilters _filters = DashboardFilters.last7Days();
   List<IronSourceStatsRow> _rawRows = [];
   List<IronSourceApp> _apps = [];
+  List<IronSourceStatsRow> _filterMetadataRows = [];
   bool _loading = true;
   String? _error;
 
   List<IronSourceStatsRow> _cachedRawRows = [];
   String? _cachedStartDate;
   String? _cachedEndDate;
+  String? _cachedFilterKey;
 
   @override
   void initState() {
@@ -50,7 +59,6 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   @override
   void dispose() {
     ThemeModeNotifier.valueNotifier.removeListener(_onThemeChanged);
-    _saveFilters();
     super.dispose();
   }
 
@@ -70,38 +78,16 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   bool get _isCacheValid =>
       _cachedStartDate == _filters.startDateStr &&
       _cachedEndDate == _filters.endDateStr &&
+      _cachedFilterKey == _filterKey &&
       _cachedRawRows.isNotEmpty;
 
-  bool _listNotEmpty(List<String>? l) => l != null && l.isNotEmpty;
+  String get _filterKey =>
+      '${_filters.appKeys?.join(',') ?? ''}|${_filters.countries?.join(',') ?? ''}|${_filters.adUnits?.join(',') ?? ''}|${_filters.platforms?.join(',') ?? ''}';
 
   void _applyFiltersFromCache() {
     if (_cachedRawRows.isEmpty) return;
-    final filtered = _cachedRawRows.where((row) {
-      if (_listNotEmpty(_filters.appKeys) && !_filters.appKeys!.contains((row.appKey ?? '').trim())) return false;
-      if (_listNotEmpty(_filters.adUnits) && !_adUnitMatchesAny(row.adUnits, _filters.adUnits!)) return false;
-      if (_listNotEmpty(_filters.countries) && !_filters.countries!.contains((row.country ?? '').trim().toUpperCase())) return false;
-      if (_listNotEmpty(_filters.platforms) && !_filters.platforms!.contains((row.platform ?? '').trim().toLowerCase())) return false;
-      return true;
-    }).toList();
-    _rawRows = filtered;
+    _rawRows = _cachedRawRows;
     setState(() {});
-  }
-
-  bool _adUnitMatchesAny(String? rowAdUnit, List<String> filterAdUnits) {
-    if (rowAdUnit == null) return false;
-    for (final f in filterAdUnits) {
-      if (_adUnitMatches(rowAdUnit, f)) return true;
-    }
-    return false;
-  }
-
-  bool _adUnitMatches(String? rowAdUnit, String filterAdUnit) {
-    if (rowAdUnit == null) return false;
-    final normalized = rowAdUnit.toLowerCase().replaceAll(' ', '');
-    final f = filterAdUnit.toLowerCase().trim();
-    return normalized.contains(f) || f.contains(normalized) ||
-        (f == 'rewardedvideo' && normalized.contains('rewarded')) ||
-        (f == 'offerwall' && normalized.contains('offer'));
   }
 
   Future<void> _load() async {
@@ -111,7 +97,13 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     }
     setState(() { _loading = true; _error = null; });
     try {
-      final full = await _repo.getStatsRawFull(_filters.startDateStr, _filters.endDateStr);
+      final dateFilters = DashboardFilters(
+        startDate: _filters.startDate,
+        endDate: _filters.endDate,
+        datePreset: _filters.datePreset,
+      );
+      final full = await _repo.getStatsRaw(_filters);
+      final metadataFuture = _repo.getFilterMetadata(dateFilters);
       if (_apps.isEmpty) {
         try { _apps = await _repo.getApplications(); } catch (_) {}
       }
@@ -119,7 +111,12 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       _cachedRawRows = full;
       _cachedStartDate = _filters.startDateStr;
       _cachedEndDate = _filters.endDateStr;
+      _cachedFilterKey = _filterKey;
       _applyFiltersFromCache();
+      try {
+        _filterMetadataRows = await metadataFuture;
+      } catch (_) {}
+      if (!mounted) return;
       setState(() => _loading = false);
     } catch (e) {
       if (mounted) {
@@ -161,7 +158,6 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
           datePreset: DateRangePreset.custom,
         );
       });
-      _saveFilters();
       _load();
     }
   }
@@ -191,7 +187,6 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     setState(() {
       _filters = _filters.copyWith(startDate: start, endDate: end, datePreset: preset);
     });
-    _saveFilters();
     _load();
   }
 
@@ -205,13 +200,13 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       for (final d in row.data ?? []) {
         switch (widget.metricId) {
           case 'revenue':
-            total += (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0;
+            total += _revNum(d['revenue']);
             break;
           case 'impressions':
             total += (d['impressions'] is num) ? (d['impressions'] as num).toDouble() : 0;
             break;
           case 'ecpm':
-            totalRevenue += (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0;
+            totalRevenue += _revNum(d['revenue']);
             totalImpressions += (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
             break;
           case 'clicks':
@@ -245,10 +240,11 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
             total += (d['sessions'] is num) ? (d['sessions'] as num).toDouble() : 0;
             break;
           default:
-            total += (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0;
+            total += _revNum(d['revenue']);
         }
       }
     }
+    if (widget.metricId == 'revenue') return total;
     if (widget.metricId == 'ecpm' && totalImpressions > 0) return (totalRevenue / totalImpressions) * 1000;
     if (rateCount > 0) return total / rateCount;
     return total;
@@ -264,13 +260,13 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
         double v = 0;
         switch (widget.metricId) {
           case 'revenue':
-            v = (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0;
+            v = _revNum(d['revenue']);
             break;
           case 'impressions':
             v = (d['impressions'] is num) ? (d['impressions'] as num).toDouble() : 0;
             break;
           case 'ecpm':
-            final rev = (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0.0;
+            final rev = _revNum(d['revenue']);
             final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
             v = imp > 0 ? (rev / imp) * 1000 : 0;
             break;
@@ -302,7 +298,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
             v = (d['sessions'] is num) ? (d['sessions'] as num).toDouble() : 0;
             break;
           default:
-            v = (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0;
+            v = _revNum(d['revenue']);
         }
         byDate[date] = (byDate[date] ?? 0) + v;
       }
@@ -329,8 +325,14 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       case 'ctr':
         return formatPercent(value);
       default:
-        return value.toStringAsFixed(2);
+        return value.toString();
     }
+  }
+
+  Future<void> _goBack() async {
+    await _saveFilters();
+    if (!mounted) return;
+    context.pop();
   }
 
   @override
@@ -339,12 +341,30 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     final entry = getGlossaryEntry(widget.metricId);
     final title = entry != null ? getGlossaryTitle(entry.id, locale) : widget.metricId;
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _goBack();
+      },
+      child: Scaffold(
       appBar: AppBar(
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Theme.of(context).colorScheme.surface,
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+              ],
+            ),
+          ),
+        ),
         title: Text(title),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
+          onPressed: _goBack,
         ),
         actions: const [],
       ),
@@ -445,6 +465,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                     ],
                   ),
                 ),
+      ),
     );
   }
 
@@ -463,10 +484,14 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
           const SizedBox(width: 8),
           _chip('90 días', DateRangePreset.last90),
           const SizedBox(width: 8),
-          ActionChip(
+          FilterChip(
             label: Text(AppStrings.t('filter_custom', LocaleNotifier.current)),
-            onPressed: _pickDateRange,
+            selected: _filters.datePreset == DateRangePreset.custom,
+            onSelected: (_) => _pickDateRange(),
             avatar: const Icon(Icons.calendar_today, size: 18),
+            selectedColor: Theme.of(context).colorScheme.primaryContainer,
+            checkmarkColor: Theme.of(context).colorScheme.primary,
+            showCheckmark: true,
           ),
         ],
       ),
@@ -490,19 +515,39 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     final isWide = width > 600;
     final compact = width < 400;
     final dropWidth = compact ? 110.0 : (isWide ? 160.0 : double.infinity);
+    final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      child: Padding(
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              cs.primary.withValues(alpha: 0.12),
+              cs.tertiary.withValues(alpha: 0.06),
+            ],
+          ),
+        ),
+        child: Padding(
         padding: EdgeInsets.all(compact ? 10 : 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.filter_list, size: compact ? 18 : 20, color: Theme.of(context).colorScheme.primary),
-                SizedBox(width: compact ? 6 : 8),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.filter_list, size: compact ? 16 : 18, color: cs.primary),
+                ),
+                SizedBox(width: compact ? 8 : 10),
                 Text(AppStrings.t('filters', LocaleNotifier.current), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
               ],
             ),
@@ -543,6 +588,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -551,8 +597,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   }
 
   void _onFiltersChanged() {
-    _applyFiltersFromCache();
-    _saveFilters();
+    _load(); // Refetch: filtros se envían a la API
   }
 
   Widget _appDropdown([bool compact = false]) {
@@ -629,9 +674,10 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   }
 
   /// Lista unificada: countryCodesForFilter + países que aparecen en los datos.
+  /// Con breakdowns: 'date' las filas no tienen country; usamos _filterMetadataRows.
   List<String> get _countryOptions {
     final base = countryCodesForFilter.toSet();
-    for (final row in _rawRows) {
+    for (final row in _filterMetadataRows) {
       final c = (row.country ?? '').trim().toUpperCase();
       if (c.isNotEmpty) base.add(c);
     }
@@ -729,11 +775,24 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     final entry = getGlossaryEntry(widget.metricId);
 
     final totalValue = _totalValueForMetric();
+    final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      child: Padding(
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              cs.primary.withValues(alpha: 0.1),
+              cs.tertiary.withValues(alpha: 0.06),
+            ],
+          ),
+        ),
+        child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -741,8 +800,15 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
             Row(
               children: [
                 if (entry != null)
-                  Icon(entry.icon, color: Theme.of(context).colorScheme.primary, size: 22),
-                const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(entry.icon, color: cs.primary, size: 20),
+                  ),
+                const SizedBox(width: 10),
                 Text(
                   entry != null ? getGlossaryTitle(entry.id, LocaleNotifier.current) : widget.metricId,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
@@ -857,22 +923,43 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
           ],
         ),
       ),
+    ),
     );
   }
 
   Widget _buildDescriptionCard(GlossaryEntry entry) {
+    final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.info_outline, color: Theme.of(context).colorScheme.primary, size: 22),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              cs.tertiary.withValues(alpha: 0.08),
+              cs.primary.withValues(alpha: 0.05),
+            ],
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: cs.tertiary.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.info_outline, color: cs.primary, size: 20),
+                  ),
                 const SizedBox(width: 8),
                 Text(
                   AppStrings.t('what_is', LocaleNotifier.current),
@@ -891,6 +978,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
           ],
         ),
       ),
+    ),
     );
   }
 }

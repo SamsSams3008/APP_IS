@@ -31,6 +31,18 @@ class _GlossaryScreenState extends State<GlossaryScreen> {
     final list = _filtered(locale);
     return Scaffold(
       appBar: AppBar(
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Theme.of(context).colorScheme.surface,
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+              ],
+            ),
+          ),
+        ),
         title: Text(AppStrings.t('glossary_title', locale)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -68,31 +80,51 @@ class _GlossaryScreenState extends State<GlossaryScreen> {
                     itemCount: list.length,
                     itemBuilder: (context, i) {
                       final e = list[i];
+                      final cs = Theme.of(context).colorScheme;
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
                         elevation: 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () => context.push('/dashboard/metric/${e.id}'),
-                          child: Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
-                                        borderRadius: BorderRadius.circular(12),
+                        clipBehavior: Clip.antiAlias,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                cs.primary.withValues(alpha: 0.08),
+                                cs.tertiary.withValues(alpha: 0.05),
+                              ],
+                            ),
+                          ),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () => context.push('/dashboard/metric/${e.id}'),
+                            child: Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: [
+                                              cs.primary.withValues(alpha: 0.25),
+                                              cs.tertiary.withValues(alpha: 0.2),
+                                            ],
+                                          ),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Icon(e.icon, color: cs.primary, size: 24),
                                       ),
-                                      child: Icon(e.icon, color: Theme.of(context).colorScheme.primary, size: 24),
-                                    ),
                                     const SizedBox(width: 16),
                                     Expanded(
                                       child: Text(
@@ -119,7 +151,8 @@ class _GlossaryScreenState extends State<GlossaryScreen> {
                             ),
                           ),
                         ),
-                      );
+                      ),
+                    );
                     },
                   ),
           ),

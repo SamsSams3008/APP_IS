@@ -16,6 +16,7 @@ class StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -23,23 +24,17 @@ class StatCard extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          border: Border(
-            left: BorderSide(
-              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.6),
-              width: 4,
-            ),
-          ),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
+              cs.primary.withValues(alpha: 0.12),
+              cs.tertiary.withValues(alpha: 0.08),
             ],
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -48,7 +43,7 @@ class StatCard extends StatelessWidget {
               Row(
                 children: [
                   if (icon != null) ...[
-                    Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+                    Icon(icon, size: 18, color: cs.primary),
                     const SizedBox(width: 8),
                   ],
                   Expanded(
@@ -58,19 +53,22 @@ class StatCard extends StatelessWidget {
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                       overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Flexible(
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
                 child: Text(
                   value,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  maxLines: 2,
                 ),
               ),
               if (subtitle != null) ...[

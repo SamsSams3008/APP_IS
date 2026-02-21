@@ -99,7 +99,21 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
     return ValueListenableBuilder<String>(
       valueListenable: LocaleNotifier.valueNotifier,
       builder: (context, locale, _) => Scaffold(
-        appBar: AppBar(title: Text(AppStrings.t('credentials_title', locale))),
+        appBar: AppBar(
+          flexibleSpace: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Theme.of(context).colorScheme.surface,
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                ],
+              ),
+            ),
+          ),
+          title: Text(AppStrings.t('credentials_title', locale)),
+        ),
         body: SafeArea(
           child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -108,9 +122,23 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  AppStrings.t('config_instructions', locale),
-                  style: Theme.of(context).textTheme.bodyMedium,
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                        Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.08),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    AppStrings.t('config_instructions', locale),
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
                 ),
                 const SizedBox(height: 24),
                 if (_errorMessage != null) ...[
@@ -193,8 +221,24 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
   }
 
   Widget _buildLanguageSection(String locale) {
+    final cs = Theme.of(context).colorScheme;
     return Card(
-      child: Padding(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              cs.primary.withValues(alpha: 0.08),
+              cs.tertiary.withValues(alpha: 0.05),
+            ],
+          ),
+        ),
+        child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -225,6 +269,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
           ],
         ),
       ),
+    ),
     );
   }
 }

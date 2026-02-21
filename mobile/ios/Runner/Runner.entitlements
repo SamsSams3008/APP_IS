@@ -4,7 +4,7 @@
 <dict>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)com.example.mobile</string>
+		<string>$(AppIdentifierPrefix)com.adrevenue.ironsource</string>
 	</array>
 </dict>
 </plist>
