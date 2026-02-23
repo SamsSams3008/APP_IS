@@ -1,0 +1,12 @@
+---
+description: Ejecutar flutter run -d macos automáticamente al terminar cada respuesta
+alwaysApply: true
+---
+
+# Flutter run automático
+
+Tras completar cada respuesta (y aplicar cambios de código en este proyecto):
+
+1. Ejecuta en segundo plano: `cd mobile && flutter run -d macos`
+2. No preguntes al usuario; hazlo automáticamente
+3. Usa `is_background: true` para que la app siga corriendo

@@ -20,12 +20,8 @@ flutter_launcher_icons:
 3. Ejecuta: `flutter pub run flutter_launcher_icons`
 
 ## Android (release)
-1. Crea el keystore (desde la raíz del proyecto mobile):
-   ```bash
-   keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload
-   ```
-   (El keystore ya está en `.gitignore`).
-2. Copia `android/key.properties.example` a `android/key.properties` y rellena
+1. ~~Crea el keystore~~ ✅ Hecho (`upload-keystore.jks` en la raíz de mobile)
+2. ~~Configura `key.properties`~~ ✅ Hecho
 3. `android/app/build.gradle.kts` ya está configurado para usar `key.properties`
 4. `applicationId` está configurado como `com.adrevenue.ironsource`
 5. Build: `flutter build appbundle`

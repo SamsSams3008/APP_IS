@@ -579,7 +579,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Text(
-                  'Puede haber discrepancias de centésimas en esta tabla.',
+                  AppStrings.t('country_table_discrepancy', LocaleNotifier.current),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontSize: 10,
                     color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
@@ -652,7 +652,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           const SizedBox(height: 10),
                           ...byCountry.take(12).map((r) {
                             final code = r['countryCode'] as String?;
-                            final name = formatCountry(code);
+                            final name = formatCountry(code, LocaleNotifier.current);
                             final rev = (r['revenue'] as num).toDouble();
                             final imp = r['impressions'] as int;
                             return Padding(
@@ -904,7 +904,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final selected = _filters.countries ?? [];
     final allSelected = selected.isNotEmpty && options.isNotEmpty &&
         selected.toSet().containsAll(options) && options.toSet().containsAll(selected);
-    final label = selected.isEmpty || allSelected ? AppStrings.t('all', l) : (selected.length == 1 ? formatCountry(selected.single) : '${selected.length} ${AppStrings.t('countries_count', l)}');
+    final label = selected.isEmpty || allSelected ? AppStrings.t('all', l) : (selected.length == 1 ? formatCountry(selected.single, l) : '${selected.length} ${AppStrings.t('countries_count', l)}');
     return _buildFilterChip(
       label: AppStrings.t('filter_country', l),
       valueLabel: label,
@@ -914,7 +914,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final chosen = await _showMultiSelect(
           title: AppStrings.t('filter_country', l),
           options: options,
-          labels: options.map(formatCountry).toList(),
+          labels: options.map((c) => formatCountry(c, l)).toList(),
           selected: allSelectedForDialog ? options.toSet() : selected.toSet(),
         );
         if (chosen != null && mounted) {

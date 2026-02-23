@@ -37,8 +37,8 @@ String formatDate(DateTime date) {
   return DateFormat('dd/MM/yyyy').format(date);
 }
 
-/// Nombres de países por código ISO 3166-1 alpha-2 (común en APIs).
-const Map<String, String> _countryNames = {
+/// Nombres de países por código ISO 3166-1 alpha-2 (común en APIs). Español.
+const Map<String, String> _countryNamesEs = {
   'US': 'Estados Unidos', 'MX': 'México', 'ES': 'España', 'AR': 'Argentina',
   'CO': 'Colombia', 'CL': 'Chile', 'PE': 'Perú', 'BR': 'Brasil', 'EC': 'Ecuador',
   'VE': 'Venezuela', 'BO': 'Bolivia', 'PY': 'Paraguay', 'UY': 'Uruguay', 'CR': 'Costa Rica',
@@ -52,12 +52,30 @@ const Map<String, String> _countryNames = {
   'VN': 'Vietnam', 'PH': 'Filipinas', 'MY': 'Malasia', 'SG': 'Singapur',
 };
 
-/// Muestra nombre del país; si es null/vacío devuelve "Todos"; si no está en el mapa, el código.
-String formatCountry(String? code) {
-  if (code == null || code.trim().isEmpty) return 'Todos';
+/// Nombres de países en inglés.
+const Map<String, String> _countryNamesEn = {
+  'US': 'United States', 'MX': 'Mexico', 'ES': 'Spain', 'AR': 'Argentina',
+  'CO': 'Colombia', 'CL': 'Chile', 'PE': 'Peru', 'BR': 'Brazil', 'EC': 'Ecuador',
+  'VE': 'Venezuela', 'BO': 'Bolivia', 'PY': 'Paraguay', 'UY': 'Uruguay', 'CR': 'Costa Rica',
+  'PA': 'Panama', 'GT': 'Guatemala', 'HN': 'Honduras', 'SV': 'El Salvador', 'NI': 'Nicaragua',
+  'DO': 'Dominican Rep.', 'PR': 'Puerto Rico', 'CU': 'Cuba', 'JM': 'Jamaica',
+  'GB': 'United Kingdom', 'UK': 'United Kingdom', 'FR': 'France', 'DE': 'Germany', 'IT': 'Italy',
+  'CA': 'Canada', 'AU': 'Australia', 'IN': 'India', 'CN': 'China', 'JP': 'Japan',
+  'KR': 'South Korea', 'RU': 'Russia', 'PL': 'Poland', 'NL': 'Netherlands',
+  'BE': 'Belgium', 'PT': 'Portugal', 'GR': 'Greece', 'TR': 'Turkey', 'ZA': 'South Africa',
+  'EG': 'Egypt', 'NG': 'Nigeria', 'KE': 'Kenya', 'ID': 'Indonesia', 'TH': 'Thailand',
+  'VN': 'Vietnam', 'PH': 'Philippines', 'MY': 'Malaysia', 'SG': 'Singapore',
+};
+
+/// Muestra nombre del país según locale; si es null/vacío devuelve "All"/"Todos".
+String formatCountry(String? code, [String? locale]) {
+  if (code == null || code.trim().isEmpty) {
+    return (locale == 'en') ? 'All' : 'Todos';
+  }
   final upper = code.trim().toUpperCase();
-  return _countryNames[upper] ?? upper;
+  final names = (locale == 'en') ? _countryNamesEn : _countryNamesEs;
+  return names[upper] ?? upper;
 }
 
 /// Códigos de país para filtros (si la API no devuelve país, el usuario puede elegir igual).
-List<String> get countryCodesForFilter => _countryNames.keys.toList()..sort();
+List<String> get countryCodesForFilter => _countryNamesEs.keys.toList()..sort();

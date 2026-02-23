@@ -690,10 +690,10 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     final allSelected = selected.isNotEmpty && options.isNotEmpty &&
         selected.toSet().containsAll(options) && options.toSet().containsAll(selected);
     final l = LocaleNotifier.current;
-    final label = selected.isEmpty || allSelected ? AppStrings.t('all', l) : (selected.length == 1 ? formatCountry(selected.single) : '${selected.length} ${AppStrings.t('countries_count', l)}');
+    final label = selected.isEmpty || allSelected ? AppStrings.t('all', l) : (selected.length == 1 ? formatCountry(selected.single, l) : '${selected.length} ${AppStrings.t('countries_count', l)}');
     return _buildFilterChip(label: AppStrings.t('filter_country', l), valueLabel: label, compact: compact, onTap: () async {
       final allSelectedForDialog = selected.isEmpty || allSelected;
-      final chosen = await _showMultiSelect(title: AppStrings.t('filter_country', l), options: options, labels: options.map(formatCountry).toList(), selected: allSelectedForDialog ? options.toSet() : selected.toSet());
+      final chosen = await _showMultiSelect(title: AppStrings.t('filter_country', l), options: options, labels: options.map((c) => formatCountry(c, l)).toList(), selected: allSelectedForDialog ? options.toSet() : selected.toSet());
       if (chosen != null && mounted) {
         final all = chosen.isEmpty || chosen.length >= options.length;
         setState(() => _filters = _filters.copyWith(countries: all ? null : chosen, clearCountries: all));

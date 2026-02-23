@@ -39,6 +39,7 @@ class AppStrings {
     'no_data_table': {'es': 'Sin datos para la tabla', 'en': 'No data for table'},
     'no_data_metric': {'es': 'Sin datos para esta métrica en el periodo seleccionado', 'en': 'No data for this metric in the selected period'},
     'no_country_data': {'es': 'No hay datos desglosados por país. Comprueba que en la API de LevelPlay el breakdown "country" esté incluido y que tu cuenta tenga datos por país. El filtro País arriba permite filtrar cuando sí haya datos.', 'en': 'No data broken down by country. Check that the LevelPlay API includes the "country" breakdown and that your account has country data. The Country filter above allows filtering when data is available.'},
+    'country_table_discrepancy': {'es': 'Puede haber discrepancias de centésimas en esta tabla.', 'en': 'Minor discrepancies may appear in this table.'},
     'date': {'es': 'Fecha', 'en': 'Date'},
     'income': {'es': 'Ingresos', 'en': 'Revenue'},
     'clicks': {'es': 'Clicks', 'en': 'Clicks'},
