@@ -44,12 +44,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final CredentialsRepository _credentials = CredentialsRepository();
 
   DashboardFilters _filters = DashboardFilters.last7Days();
+  DateRangePreset _displayDatePreset = DateRangePreset.last7;
   DashboardStats? _stats;
+  DashboardStats? _prevStats;
+  DashboardStats? _displayStats;
+  DashboardStats? _displayPrevStats;
   List<IronSourceStatsRow> _rawRows = [];
   List<IronSourceApp> _apps = [];
   List<IronSourceStatsRow> _filterMetadataRows = [];
   bool _loading = true;
   String? _error;
+  bool _filtersExpanded = false;
 
   // Cache: por fechas + filtros (se envían a la API)
   List<IronSourceStatsRow> _cachedRawRows = [];
@@ -70,8 +75,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadSavedFiltersAndCheckCredentials() async {
+    final saved = await DashboardFilters.loadDashboard();
     if (mounted) {
-      setState(() => _filters = DashboardFilters.last7Days());
+      setState(() => _filters = saved);
       await _checkCredentials();
     }
   }
@@ -109,18 +115,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool get _isCacheValid =>
       _cachedStartDate == _filters.startDateStr &&
       _cachedEndDate == _filters.endDateStr &&
-      _cachedFilterKey == _filterKey &&
-      _cachedRawRows.isNotEmpty;
+      _cachedFilterKey == _filterKey;
 
   String get _filterKey =>
       '${_filters.appKeys?.join(',') ?? ''}|${_filters.countries?.join(',') ?? ''}|${_filters.adUnits?.join(',') ?? ''}|${_filters.platforms?.join(',') ?? ''}';
 
-  /// Con breakdowns: 'date' los filtros se envían a la API; no hay filtrado client-side.
+  /// Con breakdowns: 'date' los filtros se envían a la API. Si no hay datos, todo en 0.
   void _applyFiltersFromCache() {
-    if (_cachedRawRows.isEmpty) return;
     _rawRows = _cachedRawRows;
     _stats = DashboardRepository.statsFromRows(_cachedRawRows);
+    _displayDatePreset = _filters.datePreset;
     setState(() {});
+    _loadPrevStats();
+  }
+
+  Future<void> _loadPrevStats() async {
+    try {
+      final prev = await _repo.getPreviousPeriodStats(_filters);
+      if (mounted) {
+        setState(() {
+          _prevStats = prev;
+          _displayStats = _stats;
+          _displayPrevStats = prev;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _displayStats = _stats;
+          _displayPrevStats = null;
+        });
+      }
+    }
   }
 
   Future<void> _saveFilters() async {
@@ -135,6 +161,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _rawRows = [];
+      _cachedRawRows = [];
+      _stats = DashboardRepository.statsFromRows([]);
+      _displayStats = _stats;
     });
     try {
       final dateFilters = DashboardFilters(
@@ -154,6 +184,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _cachedStartDate = _filters.startDateStr;
       _cachedEndDate = _filters.endDateStr;
       _cachedFilterKey = _filterKey;
+      _displayStats ??= _stats;
       _applyFiltersFromCache();
       try {
         _filterMetadataRows = await metadataFuture;
@@ -163,11 +194,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = _isNetworkError(e.toString())
+              ? AppStrings.t('no_internet', LocaleNotifier.current)
+              : e.toString();
           _loading = false;
         });
       }
     }
+  }
+
+  static bool _isNetworkError(String error) {
+    final lower = error.toLowerCase();
+    return lower.contains('socketexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('connection refused') ||
+        lower.contains('connection timed out') ||
+        lower.contains('network is unreachable') ||
+        lower.contains('no internet');
   }
 
   static bool _isKeysError(String? error) {
@@ -273,11 +316,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: Text(AppStrings.t('dashboard_tab', LocaleNotifier.current)),
         actions: [
           IconButton(
-            icon: const Icon(Icons.menu_book_outlined),
-            onPressed: () => context.push('/glossary'),
-            tooltip: AppStrings.t('glossary_tooltip', locale),
-          ),
-          IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => context.push('/credentials'),
             tooltip: AppStrings.t('settings_tooltip', locale),
@@ -322,13 +360,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       if (_stats != null) ...[
                                         _buildFiltersSection(),
                                         SizedBox(height: padding),
-                                        Text(
-                                          AppStrings.t('totals_with_filters', locale),
-                                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
+                                        _buildMainHeroCard(locale),
+                                        const SizedBox(height: 12),
+                                        _buildMetricNavButtons(locale),
+                                        SizedBox(height: padding),
                                         _buildStatsGrid(_stats!, constraints.maxWidth),
                                         SizedBox(height: padding * 1.2),
                                         _buildCountriesSection(),
@@ -446,13 +481,231 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  String _prevPeriodLabel(String locale) {
+    switch (_displayDatePreset) {
+      case DateRangePreset.today:
+        return AppStrings.t('prev_today', locale);
+      case DateRangePreset.yesterday:
+        return AppStrings.t('prev_yesterday', locale);
+      case DateRangePreset.last7:
+        return AppStrings.t('prev_7_days', locale);
+      case DateRangePreset.last30:
+        return AppStrings.t('prev_30_days', locale);
+      case DateRangePreset.last90:
+        return AppStrings.t('prev_90_days', locale);
+      case DateRangePreset.custom:
+        return '';
+    }
+  }
+
+  Widget _buildMainHeroCard(String locale) {
+    final s = (_displayStats ?? _stats)!;
+    final cs = Theme.of(context).colorScheme;
+    final showCompare = !_loading &&
+        _displayDatePreset != DateRangePreset.custom &&
+        (_displayPrevStats ?? _prevStats) != null;
+    double? revPct;
+    double? impPct;
+    double? ecpmPct;
+    final prev = _displayPrevStats ?? _prevStats;
+    if (showCompare && prev != null) {
+      if (prev.revenue > 0) {
+        revPct = ((s.revenue - prev.revenue) / prev.revenue) * 100;
+      }
+      if (prev.impressions > 0) {
+        impPct = ((s.impressions - prev.impressions) / prev.impressions) * 100;
+      }
+      if (prev.ecpm > 0) {
+        ecpmPct = ((s.ecpm - prev.ecpm) / prev.ecpm) * 100;
+      }
+    }
+    final prevLabel = _prevPeriodLabel(locale);
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              cs.primary.withValues(alpha: 0.12),
+              cs.tertiary.withValues(alpha: 0.06),
+            ],
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.t('revenue', locale),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              formatMoney(s.revenue),
+              style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: const Color(0xFF5BA3E8),
+              ),
+            ),
+            if (revPct != null && prevLabel.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                '${revPct >= 0 ? '+' : ''}${revPct.toStringAsFixed(1)}% $prevLabel',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: revPct >= 0 ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text.rich(
+                        TextSpan(
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 12,
+                          ),
+                          children: [
+                            TextSpan(text: AppStrings.t('impressions', locale)),
+                            if (impPct != null && prevLabel.isNotEmpty)
+                              TextSpan(
+                                text: ' ${impPct >= 0 ? '+' : ''}${impPct.toStringAsFixed(1)}%',
+                                style: TextStyle(
+                                  color: impPct >= 0 ? Colors.green : Colors.red,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        formatNumber(s.impressions),
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text.rich(
+                        TextSpan(
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 12,
+                          ),
+                          children: [
+                            TextSpan(text: AppStrings.t('ecpm', locale)),
+                            if (ecpmPct != null && prevLabel.isNotEmpty)
+                              TextSpan(
+                                text: ' ${ecpmPct >= 0 ? '+' : ''}${ecpmPct.toStringAsFixed(1)}%',
+                                style: TextStyle(
+                                  color: ecpmPct >= 0 ? Colors.green : Colors.red,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        formatMoney(s.ecpm),
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMetricNavButtons(String locale) {
+    return Row(
+      children: [
+        Expanded(
+          child: _navChip(AppStrings.t('revenue', locale), 'revenue'),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _navChip(AppStrings.t('impressions', locale), 'impressions'),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _navChip(AppStrings.t('ecpm', locale), 'ecpm'),
+        ),
+      ],
+    );
+  }
+
+  Widget _navChip(String label, String metricId) {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.8),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () async {
+          await _saveFilters();
+          if (!context.mounted) return;
+          context.push('/dashboard/metric/$metricId');
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.arrow_forward_ios, size: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildStatsGrid(DashboardStats s, double width) {
     final l = LocaleNotifier.current;
     final crossCount = width > 900 ? 4 : (width > 600 ? 3 : 2);
     final cards = <Widget>[
-      _wrapMetricCard(AppStrings.t('ingresos', l), formatMoney(s.revenue), Icons.attach_money, 'revenue'),
-      _wrapMetricCard(AppStrings.t('impressions', l), formatNumber(s.impressions), Icons.visibility, 'impressions'),
-      _wrapMetricCard(AppStrings.t('ecpm', l), formatMoney(s.ecpm), Icons.trending_up, 'ecpm'),
       if (s.clicks != null)
         _wrapMetricCard(AppStrings.t('clicks', l), formatNumber(s.clicks!), Icons.touch_app, 'clicks'),
       if (s.completions != null)
@@ -522,9 +775,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
         byCountry[countryKey]!['impressions'] = (byCountry[countryKey]!['impressions'] as int) + imp;
       }
     }
+    final selectedCountries = _filters.countries ?? [];
+    if (selectedCountries.isNotEmpty) {
+      for (final code in selectedCountries) {
+        final key = code.trim().toUpperCase();
+        if (key.isNotEmpty && !byCountry.containsKey(key)) {
+          byCountry[key] = {'revenue': 0.0, 'impressions': 0};
+        }
+      }
+    }
     return byCountry.entries
+        .where((e) => e.key != '__all__')
         .map((e) => {
-              'countryCode': e.key == '__all__' ? null : e.key,
+              'countryCode': e.key,
               'revenue': e.value['revenue'] as num,
               'impressions': e.value['impressions'] as int,
             })
@@ -604,7 +867,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     builder: (context, c) {
                       final w = c.maxWidth;
                       final colRev = w > 400 ? 90.0 : 70.0;
-                      final colImp = w > 400 ? 95.0 : 82.0;
+                      final colImp = w > 400 ? 100.0 : 88.0;
                       final colCountry = w - colRev - colImp - 16;
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -723,87 +986,109 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       clipBehavior: Clip.antiAlias,
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              cs.primary.withValues(alpha: 0.12),
-              cs.tertiary.withValues(alpha: 0.06),
+              cs.primary.withValues(alpha: 0.1),
+              cs.tertiary.withValues(alpha: 0.05),
             ],
           ),
         ),
-        padding: const EdgeInsets.all(20),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(Icons.filter_list, color: Theme.of(context).colorScheme.primary, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  AppStrings.t('filters', LocaleNotifier.current),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final compact = constraints.maxWidth < 400;
-                final dropWidth = compact ? 110.0 : (constraints.maxWidth > 700 ? 180.0 : 140.0);
-                final maxW = constraints.maxWidth;
-                if (isWide) {
-                  return ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: maxW),
-                    child: ClipRect(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        clipBehavior: Clip.hardEdge,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(width: dropWidth, child: _buildAppDropdown(compact)),
-                            SizedBox(width: compact ? 6.0 : 12.0),
-                            SizedBox(width: dropWidth, child: _buildAdUnitDropdown(compact)),
-                            SizedBox(width: compact ? 6.0 : 12.0),
-                            SizedBox(width: compact ? 100.0 : 140.0, child: _buildPlatformDropdown(compact)),
-                            SizedBox(width: compact ? 6.0 : 12.0),
-                            SizedBox(width: dropWidth, child: _buildCountryDropdown(compact)),
-                          ],
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => setState(() => _filtersExpanded = !_filtersExpanded),
+                splashFactory: NoSplash.splashFactory,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: SizedBox(
+                    height: 28,
+                    width: double.infinity,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.filter_list,
+                          size: 16,
+                          color: cs.primary,
                         ),
-                      ),
+                        const SizedBox(width: 6),
+                        Text(
+                          AppStrings.t('filters', LocaleNotifier.current),
+                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: cs.onSurface,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const Spacer(),
+                        AnimatedRotation(
+                          turns: _filtersExpanded ? 0.5 : 0,
+                          duration: const Duration(milliseconds: 200),
+                          child: Icon(Icons.expand_more, size: 20, color: cs.onSurfaceVariant),
+                        ),
+                      ],
                     ),
-                  );
-                }
-                return ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: maxW),
-                  child: Wrap(
-                    spacing: compact ? 8.0 : 12.0,
-                    runSpacing: compact ? 8.0 : 12.0,
-                    children: [
-                      SizedBox(width: (maxW - (compact ? 8.0 : 12.0)) / 2, child: _buildAppDropdown(compact)),
-                      SizedBox(width: (maxW - (compact ? 8.0 : 12.0)) / 2, child: _buildAdUnitDropdown(compact)),
-                      SizedBox(width: (maxW - (compact ? 8.0 : 12.0)) / 2, child: _buildPlatformDropdown(compact)),
-                      SizedBox(width: (maxW - (compact ? 8.0 : 12.0)) / 2, child: _buildCountryDropdown(compact)),
-                    ],
                   ),
-                );
-              },
+                ),
+              ),
             ),
+            AnimatedCrossFade(
+                firstChild: const SizedBox.shrink(),
+                secondChild: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      const dropWidth = 88.0;
+                      final maxW = constraints.maxWidth;
+                      if (isWide) {
+                        return SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(width: dropWidth, child: _buildAppDropdown(true)),
+                              const SizedBox(width: 6),
+                              SizedBox(width: dropWidth, child: _buildAdUnitDropdown(true)),
+                              const SizedBox(width: 6),
+                              SizedBox(width: dropWidth, child: _buildPlatformDropdown(true)),
+                              const SizedBox(width: 6),
+                              SizedBox(width: dropWidth, child: _buildCountryDropdown(true)),
+                            ],
+                          ),
+                        );
+                      }
+                      final cellW = (maxW - 6) / 2;
+                      final safeW = cellW.isFinite && cellW > 0 ? cellW : 80.0;
+                      return Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          SizedBox(width: safeW, child: _buildAppDropdown(true)),
+                          SizedBox(width: safeW, child: _buildAdUnitDropdown(true)),
+                          SizedBox(width: safeW, child: _buildPlatformDropdown(true)),
+                          SizedBox(width: safeW, child: _buildCountryDropdown(true)),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                crossFadeState: _filtersExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+                duration: const Duration(milliseconds: 220),
+                sizeCurve: Curves.easeOut,
+              ),
           ],
         ),
       ),
@@ -934,12 +1219,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(compact ? 8 : 12),
+      borderRadius: BorderRadius.circular(6),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14, vertical: compact ? 10 : 12),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         decoration: BoxDecoration(
           border: Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.5)),
-          borderRadius: BorderRadius.circular(compact ? 8 : 12),
+          borderRadius: BorderRadius.circular(6),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -949,17 +1234,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
               label,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
-                fontSize: 11,
+                fontSize: 10,
               ),
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(child: Text(valueLabel, overflow: TextOverflow.ellipsis, maxLines: 1, style: Theme.of(context).textTheme.bodyMedium)),
-                const Icon(Icons.arrow_drop_down, size: 20),
+                Expanded(
+                  child: Text(
+                    valueLabel,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12),
+                  ),
+                ),
+                Icon(Icons.arrow_drop_down, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ],
             ),
           ],

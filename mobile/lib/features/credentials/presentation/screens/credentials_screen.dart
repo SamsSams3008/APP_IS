@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/credentials_updated_notifier.dart';
 import '../../../../core/l10n/app_strings.dart';
 import '../../../../core/locale_notifier.dart';
+import '../../../../core/theme/theme_mode_notifier.dart';
 import '../../../../data/credentials/credentials_repository.dart';
+import '../../../dashboard/data/dashboard_repository.dart';
 
 class CredentialsScreen extends StatefulWidget {
   const CredentialsScreen({super.key});
@@ -30,6 +32,11 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
     _repo = CredentialsRepository();
     _loadStored();
     LocaleNotifier.valueNotifier.addListener(_onLocaleChanged);
+    ThemeModeNotifier.valueNotifier.addListener(_onThemeChanged);
+  }
+
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onLocaleChanged() {
@@ -47,6 +54,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
   @override
   void dispose() {
     LocaleNotifier.valueNotifier.removeListener(_onLocaleChanged);
+    ThemeModeNotifier.valueNotifier.removeListener(_onThemeChanged);
     _secretKeyController.dispose();
     _refreshTokenController.dispose();
     super.dispose();
@@ -67,6 +75,15 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
         _refreshTokenController.text.trim(),
       );
       if (!mounted) return;
+      final valid = await DashboardRepository().validateCredentials();
+      if (!mounted) return;
+      if (!valid) {
+        setState(() {
+          _errorMessage = AppStrings.t('invalid_keys_config', LocaleNotifier.current);
+          _loading = false;
+        });
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(AppStrings.t('keys_saved', LocaleNotifier.current))),
       );
@@ -79,6 +96,23 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
             : e.toString();
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _goToDashboard() async {
+    final hasCredentials = await _repo.hasCredentials();
+    if (!hasCredentials || !mounted) return;
+    setState(() {
+      _errorMessage = null;
+      _loading = true;
+    });
+    final valid = await DashboardRepository().validateCredentials();
+    if (!mounted) return;
+    setState(() => _loading = false);
+    if (valid) {
+      context.go('/dashboard');
+    } else {
+      setState(() => _errorMessage = AppStrings.t('invalid_keys_config', LocaleNotifier.current));
     }
   }
 
@@ -199,14 +233,8 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                       : Text(AppStrings.t('save_continue', locale)),
                 ),
                 const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: () => context.push('/glossary'),
-                  icon: const Icon(Icons.menu_book_outlined),
-                  label: Text(AppStrings.t('glossary', locale)),
-                ),
-                const SizedBox(height: 12),
                 OutlinedButton(
-                  onPressed: () => context.go('/dashboard'),
+                  onPressed: _loading ? null : _goToDashboard,
                   child: Text(AppStrings.t('go_dashboard', locale)),
                 ),
                 const SizedBox(height: 32),
@@ -265,6 +293,30 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
               onSelectionChanged: (Set<String> selected) {
                 LocaleNotifier.set(selected.first);
               },
+            ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  ThemeModeNotifier.current == ThemeMode.light
+                      ? AppStrings.t('light_mode', locale)
+                      : AppStrings.t('dark_mode', locale),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                Switch.adaptive(
+                  value: ThemeModeNotifier.current == ThemeMode.dark,
+                  onChanged: (_) {
+                    ThemeModeNotifier.set(
+                      ThemeModeNotifier.current == ThemeMode.light
+                          ? ThemeMode.dark
+                          : ThemeMode.light,
+                    );
+                  },
+                ),
+              ],
             ),
           ],
         ),

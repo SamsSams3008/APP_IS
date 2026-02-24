@@ -13,22 +13,12 @@ class GlossaryScreen extends StatefulWidget {
 }
 
 class _GlossaryScreenState extends State<GlossaryScreen> {
-  String _query = '';
-
-  List<GlossaryEntry> _filtered(String locale) =>
-      glossaryEntries.values
-          .where((e) {
-            final t = getGlossaryTitle(e.id, locale);
-            final d = getGlossaryDescription(e.id, locale);
-            final q = _query.toLowerCase();
-            return t.toLowerCase().contains(q) || d.toLowerCase().contains(q);
-          })
-          .toList();
+  List<GlossaryEntry> get _entries => glossaryEntries.values.toList();
 
   @override
   Widget build(BuildContext context) {
     final locale = LocaleNotifier.current;
-    final list = _filtered(locale);
+    final list = _entries;
     return Scaffold(
       appBar: AppBar(
         flexibleSpace: Container(
@@ -49,27 +39,10 @@ class _GlossaryScreenState extends State<GlossaryScreen> {
           onPressed: () => context.pop(),
         ),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-            child: TextField(
-              onChanged: (v) => setState(() => _query = v),
-              decoration: InputDecoration(
-                hintText: AppStrings.t('search_hint', locale),
-                prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                filled: true,
-              ),
-            ),
-          ),
-          Expanded(
-            child: list.isEmpty
+      body: list.isEmpty
                 ? Center(
                     child: Text(
-                      _query.isEmpty ? AppStrings.t('no_entries', locale) : '${AppStrings.t('no_results_for', locale)} "$_query"',
+                      AppStrings.t('no_entries', locale),
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
@@ -155,9 +128,6 @@ class _GlossaryScreenState extends State<GlossaryScreen> {
                     );
                     },
                   ),
-          ),
-        ],
-      ),
     );
   }
 }

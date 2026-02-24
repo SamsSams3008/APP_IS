@@ -52,6 +52,28 @@ class DashboardRepository {
     );
   }
 
+  /// Stats del periodo anterior (misma duración, días previos) para comparar %.
+  Future<DashboardStats?> getPreviousPeriodStats(DashboardFilters filters) async {
+    final days = filters.endDate.difference(filters.startDate).inDays + 1;
+    final prevEnd = filters.startDate.subtract(const Duration(days: 1));
+    final prevStart = prevEnd.subtract(Duration(days: days - 1));
+    final prevFilters = DashboardFilters(
+      startDate: prevStart,
+      endDate: prevEnd,
+      datePreset: filters.datePreset,
+      appKeys: filters.appKeys,
+      platforms: filters.platforms,
+      adUnits: filters.adUnits,
+      countries: filters.countries,
+    );
+    try {
+      final rows = await getStatsRaw(prevFilters);
+      return statsFromRows(rows);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Obtiene stats. Con breakdowns: 'date' + filtros vía API los totales coinciden con IronSource.
   Future<List<IronSourceStatsRow>> getStatsRaw(DashboardFilters filters) async {
     final appKey = _join(filters.appKeys);
@@ -111,5 +133,15 @@ class DashboardRepository {
 
   Future<List<IronSourceApp>> getApplications() async {
     return _api.getApplications();
+  }
+
+  /// Valida que las credenciales guardadas funcionen (puede hacer una llamada ligera).
+  Future<bool> validateCredentials() async {
+    try {
+      await _api.getApplications();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }

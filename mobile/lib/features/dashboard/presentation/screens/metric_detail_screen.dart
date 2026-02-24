@@ -12,6 +12,7 @@ import '../../../../shared/widgets/multi_select_dialog.dart';
 import '../../../glossary/glossary_data.dart';
 import '../../data/dashboard_repository.dart';
 import '../../domain/dashboard_filters.dart';
+import '../../domain/dashboard_stats.dart';
 
 double _revNum(Object? v) {
   if (v == null) return 0;
@@ -44,6 +45,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   String? _cachedStartDate;
   String? _cachedEndDate;
   String? _cachedFilterKey;
+  DashboardStats? _prevStats;
 
   @override
   void initState() {
@@ -78,14 +80,12 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   bool get _isCacheValid =>
       _cachedStartDate == _filters.startDateStr &&
       _cachedEndDate == _filters.endDateStr &&
-      _cachedFilterKey == _filterKey &&
-      _cachedRawRows.isNotEmpty;
+      _cachedFilterKey == _filterKey;
 
   String get _filterKey =>
       '${_filters.appKeys?.join(',') ?? ''}|${_filters.countries?.join(',') ?? ''}|${_filters.adUnits?.join(',') ?? ''}|${_filters.platforms?.join(',') ?? ''}';
 
   void _applyFiltersFromCache() {
-    if (_cachedRawRows.isEmpty) return;
     _rawRows = _cachedRawRows;
     setState(() {});
   }
@@ -95,7 +95,12 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       _applyFiltersFromCache();
       return;
     }
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+      _rawRows = [];
+      _cachedRawRows = [];
+    });
     try {
       final dateFilters = DashboardFilters(
         startDate: _filters.startDate,
@@ -116,16 +121,32 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       try {
         _filterMetadataRows = await metadataFuture;
       } catch (_) {}
+      try {
+        final prev = await _repo.getPreviousPeriodStats(_filters);
+        if (mounted) _prevStats = prev;
+      } catch (_) {}
       if (!mounted) return;
       setState(() => _loading = false);
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = _isNetworkError(e.toString())
+              ? AppStrings.t('no_internet', LocaleNotifier.current)
+              : e.toString();
           _loading = false;
         });
       }
     }
+  }
+
+  static bool _isNetworkError(String error) {
+    final lower = error.toLowerCase();
+    return lower.contains('socketexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('connection refused') ||
+        lower.contains('connection timed out') ||
+        lower.contains('network is unreachable') ||
+        lower.contains('no internet');
   }
 
   static bool _isKeysError(String? error) {
@@ -307,6 +328,16 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     return list;
   }
 
+  /// Mínimo intervalo "nice" >= [minInterval] (máx. 8 etiquetas en el eje Y).
+  static double _niceIntervalAtLeast(double minInterval) {
+    if (minInterval <= 0) return 1;
+    const candidates = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0];
+    for (final c in candidates) {
+      if (c >= minInterval) return c;
+    }
+    return (minInterval / 50).ceilToDouble() * 50;
+  }
+
   String _formatChartValue(double value) {
     switch (widget.metricId) {
       case 'revenue':
@@ -327,6 +358,106 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       default:
         return value.toString();
     }
+  }
+
+  String _metricPrevPeriodLabel(String locale) {
+    switch (_filters.datePreset) {
+      case DateRangePreset.today:
+        return AppStrings.t('prev_today', locale);
+      case DateRangePreset.yesterday:
+        return AppStrings.t('prev_yesterday', locale);
+      case DateRangePreset.last7:
+        return AppStrings.t('prev_7_days', locale);
+      case DateRangePreset.last30:
+        return AppStrings.t('prev_30_days', locale);
+      case DateRangePreset.last90:
+        return AppStrings.t('prev_90_days', locale);
+      case DateRangePreset.custom:
+        return '';
+    }
+  }
+
+  double? _prevValueForMetric() {
+    final prev = _prevStats;
+    if (prev == null) return null;
+    switch (widget.metricId) {
+      case 'revenue':
+        return prev.revenue > 0 ? prev.revenue.toDouble() : null;
+      case 'impressions':
+        return prev.impressions > 0 ? prev.impressions.toDouble() : null;
+      case 'ecpm':
+        return prev.ecpm > 0 ? prev.ecpm : null;
+      default:
+        return null;
+    }
+  }
+
+  Widget _buildMetricHeroCard() {
+    final locale = LocaleNotifier.current;
+    final entry = getGlossaryEntry(widget.metricId);
+    final title = entry != null ? getGlossaryTitle(entry.id, locale) : widget.metricId;
+    final value = _totalValueForMetric();
+    final prevValue = _prevValueForMetric();
+    final showCompare = _filters.datePreset != DateRangePreset.custom &&
+        prevValue != null &&
+        prevValue > 0;
+    double? pct;
+    if (showCompare) {
+      final pv = prevValue;
+      if (pv > 0) pct = ((value - pv) / pv) * 100;
+    }
+    final prevLabel = _metricPrevPeriodLabel(locale);
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xFF5BA3E8).withValues(alpha: 0.12),
+              cs.tertiary.withValues(alpha: 0.06),
+            ],
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.85),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _formatChartValue(value),
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: const Color(0xFF5BA3E8),
+              ),
+            ),
+            if (pct != null && prevLabel.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                '${pct >= 0 ? '+' : ''}${pct.toStringAsFixed(1)}% $prevLabel',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: pct >= 0 ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _goBack() async {
@@ -356,7 +487,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
               end: Alignment.bottomRight,
               colors: [
                 Theme.of(context).colorScheme.surface,
-                Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                const Color(0xFF5BA3E8).withValues(alpha: 0.12),
               ],
             ),
           ),
@@ -420,6 +551,8 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                 _buildDateChips(),
                                 const SizedBox(height: 16),
                                 _buildFiltersCard(),
+                                const SizedBox(height: 20),
+                                _buildMetricHeroCard(),
                                 const SizedBox(height: 20),
                                 _buildChart(),
                                 if (entry != null) ...[
@@ -572,7 +705,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
               LayoutBuilder(
                 builder: (_, c) {
                   final gap = compact ? 8.0 : 12.0;
-                  final half = (c.maxWidth - gap) / 2;
+                  final half = ((c.maxWidth - gap) / 2).clamp(80.0, double.infinity);
                   return Wrap(
                     spacing: gap,
                     runSpacing: gap,
@@ -769,12 +902,14 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       );
     }
 
-    final maxY = entries.isEmpty ? 1.0 : entries.map((e) => e.value).reduce((a, b) => a > b ? a : b);
+    final dataMaxY = entries.isEmpty ? 1.0 : entries.map((e) => e.value).reduce((a, b) => a > b ? a : b);
     final minY = 0.0;
+    final range = (dataMaxY - minY).clamp(0.01, double.infinity);
+    final yInterval = _niceIntervalAtLeast(range / 7);
+    final numSteps = (range / yInterval).ceil().clamp(1, 7);
+    final maxY = minY + yInterval * numSteps;
     final spots = entries.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.value)).toList();
     final entry = getGlossaryEntry(widget.metricId);
-
-    final totalValue = _totalValueForMetric();
     final cs = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
@@ -787,7 +922,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              cs.primary.withValues(alpha: 0.1),
+              const Color(0xFF5BA3E8).withValues(alpha: 0.12),
               cs.tertiary.withValues(alpha: 0.06),
             ],
           ),
@@ -803,10 +938,10 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                   Container(
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
-                      color: cs.primary.withValues(alpha: 0.2),
+                      color: const Color(0xFF5BA3E8).withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Icon(entry.icon, color: cs.primary, size: 20),
+                    child: Icon(entry.icon, color: const Color(0xFF5BA3E8), size: 20),
                   ),
                 const SizedBox(width: 10),
                 Text(
@@ -815,21 +950,13 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              '${AppStrings.t('total_with_filters_chart', LocaleNotifier.current)}: ${_formatChartValue(totalValue)}',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.primary,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
             const SizedBox(height: 16),
             SizedBox(
               height: 260,
               child: LineChart(
                 LineChartData(
                   minY: minY,
-                  maxY: maxY <= 0 ? 1 : (maxY * 1.1),
+                  maxY: maxY <= 0 ? 1 : maxY,
                   lineTouchData: LineTouchData(
                     touchTooltipData: LineTouchTooltipData(
                       fitInsideHorizontally: true,
@@ -857,6 +984,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                   gridData: FlGridData(
                     show: true,
                     drawVerticalLine: false,
+                    horizontalInterval: yInterval,
                     getDrawingHorizontalLine: (v) => FlLine(
                       color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
                       strokeWidth: 1,
@@ -866,26 +994,32 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
-                        reservedSize: 48,
+                        reservedSize: 52,
+                        interval: yInterval,
                         getTitlesWidget: (value, meta) => Text(
                           _formatChartValue(value),
-                          style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          overflow: TextOverflow.clip,
+                          maxLines: 1,
                         ),
                       ),
                     ),
                     bottomTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
-                        reservedSize: 28,
+                        reservedSize: 32,
+                        interval: (entries.length <= 5) ? 1 : ((entries.length - 1) / 4).clamp(1.0, double.infinity),
                         getTitlesWidget: (value, meta) {
-                          final i = value.toInt();
+                          final i = value.round();
                           if (i >= 0 && i < entries.length) {
                             final label = entries[i].key.length >= 10 ? entries[i].key.substring(5, 10) : entries[i].key;
                             return Padding(
                               padding: const EdgeInsets.only(top: 8),
                               child: Text(
                                 label,
-                                style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                style: TextStyle(fontSize: 9, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                overflow: TextOverflow.clip,
+                                maxLines: 1,
                               ),
                             );
                           }
@@ -897,23 +1031,23 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                     rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   ),
                   borderData: FlBorderData(show: false),
-                  lineBarsData: [
+                    lineBarsData: [
                     LineChartBarData(
                       spots: spots,
-                      isCurved: true,
+                      isCurved: false,
                       barWidth: 2.5,
-                      color: Theme.of(context).colorScheme.primary,
+                      color: const Color(0xFF5BA3E8),
                       dotData: FlDotData(
                         show: spots.length <= 25,
                         getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(
                           radius: 3,
-                          color: Theme.of(context).colorScheme.primary,
+                          color: const Color(0xFF5BA3E8),
                           strokeWidth: 0,
                         ),
                       ),
                       belowBarData: BarAreaData(
                         show: true,
-                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                        color: const Color(0xFF5BA3E8).withValues(alpha: 0.12),
                       ),
                     ),
                   ],
