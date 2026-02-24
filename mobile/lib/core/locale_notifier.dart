@@ -7,7 +7,7 @@ import 'constants/app_constants.dart';
 class LocaleNotifier {
   LocaleNotifier._();
 
-  static final ValueNotifier<String> valueNotifier = ValueNotifier<String>('es');
+  static final ValueNotifier<String> valueNotifier = ValueNotifier<String>('en');
 
   static const String _key = AppConstants.storageLocale;
 

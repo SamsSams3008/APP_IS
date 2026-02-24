@@ -34,7 +34,7 @@ class _SplashScreenState extends State<SplashScreen> {
     }
   }
 
-  static const Color _splashBg = Color(0xFF0E1A2B);
+  static const Color _splashBg = Color(0xFF000000);
 
   @override
   Widget build(BuildContext context) {
