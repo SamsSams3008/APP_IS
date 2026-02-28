@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../features/ask_ai/ask_ai_chat_bubble.dart';
+import '../widgets/metric_detail_content.dart';
 import '../../../../core/credentials_updated_notifier.dart';
 import '../../../../core/l10n/app_strings.dart';
 import '../../../../core/locale_notifier.dart';
@@ -9,28 +11,13 @@ import '../../../../data/credentials/credentials_repository.dart';
 import '../../../../data/ironsource/ironsource_api_client.dart';
 import '../../../../shared/utils/formatters.dart';
 import '../../../../shared/widgets/multi_select_dialog.dart';
-import '../../../../shared/widgets/stat_card.dart';
+import '../../../../shared/widgets/error_retry_body.dart';
+import '../../../../shared/widgets/wave_loading_indicator.dart';
 import '../../data/dashboard_repository.dart';
 import '../../domain/dashboard_filters.dart';
 import '../../domain/dashboard_stats.dart';
 
 double _rev(Map<String, dynamic> d) => (d['revenue'] is num) ? (d['revenue'] as num).toDouble() : 0;
-
-/// metricId para navegar a la pantalla de detalle de cada métrica.
-const Map<String, String> _statCardMetricIds = {
-  'Ingresos': 'revenue',
-  'Impresiones': 'impressions',
-  'eCPM': 'ecpm',
-  'Clicks': 'clicks',
-  'Completados': 'completions',
-  'Fill rate': 'fill_rate',
-  'Completion rate': 'completion_rate',
-  'Revenue/completion': 'revenue_per_completion',
-  'CTR': 'ctr',
-  'App requests': 'app_requests',
-  'DAU': 'dau',
-  'Sesiones': 'sessions',
-};
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -50,14 +37,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DashboardStats? _displayStats;
   DashboardStats? _displayPrevStats;
   List<IronSourceStatsRow> _rawRows = [];
+  List<IronSourceStatsRow> _tableRawRows = []; // Solo filtro fecha, para tablas
   List<IronSourceApp> _apps = [];
   List<IronSourceStatsRow> _filterMetadataRows = [];
   bool _loading = true;
   String? _error;
   bool _filtersExpanded = false;
+  int _currentTabIndex = 0;
+  int _detailsMetricIndex = 0;
+  late final PageController _mainPageController = PageController();
 
   // Cache: por fechas + filtros (se envían a la API)
   List<IronSourceStatsRow> _cachedRawRows = [];
+  List<IronSourceStatsRow> _cachedTableRawRows = [];
   String? _cachedStartDate;
   String? _cachedEndDate;
   String? _cachedFilterKey;
@@ -84,20 +76,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    _mainPageController.dispose();
     ThemeModeNotifier.valueNotifier.removeListener(_onThemeChanged);
     CredentialsUpdatedNotifier.instance.removeListener(_onCredentialsUpdated);
     super.dispose();
   }
 
+  static const List<String> _metricIds = [
+    'revenue', 'impressions', 'ecpm', 'clicks', 'completions',
+    'fill_rate', 'completion_rate', 'revenue_per_completion',
+    'ctr', 'app_requests', 'dau', 'sessions',
+  ];
+
   void _onCredentialsUpdated() {
     if (!mounted) return;
     _cachedRawRows = [];
+    _cachedTableRawRows = [];
+    _tableRawRows = [];
     _cachedStartDate = null;
     _cachedEndDate = null;
     _load();
   }
 
   void _onFiltersChanged() {
+    _saveFilters(); // Persistir filtros
     _load(); // Refetch: filtros se envían a la API
   }
 
@@ -105,7 +107,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final hasCredentials = await _credentials.hasCredentials();
     if (!mounted) return;
     if (!hasCredentials) {
-      context.push('/credentials');
+      context.go('/credentials');
+      return;
+    }
+    final valid = await DashboardRepository().validateCredentials();
+    if (!mounted) return;
+    if (!valid) {
+      context.go('/credentials');
       return;
     }
     _load();
@@ -123,7 +131,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Con breakdowns: 'date' los filtros se envían a la API. Si no hay datos, todo en 0.
   void _applyFiltersFromCache() {
     _rawRows = _cachedRawRows;
+    _tableRawRows = _cachedTableRawRows;
     _stats = DashboardRepository.statsFromRows(_cachedRawRows);
+    _displayStats = _stats;
     _displayDatePreset = _filters.datePreset;
     setState(() {});
     _loadPrevStats();
@@ -161,10 +171,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() {
       _loading = true;
       _error = null;
-      _rawRows = [];
-      _cachedRawRows = [];
-      _stats = DashboardRepository.statsFromRows([]);
-      _displayStats = _stats;
     });
     try {
       final dateFilters = DashboardFilters(
@@ -173,6 +179,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         datePreset: _filters.datePreset,
       );
       final full = await _repo.getStatsRaw(_filters);
+      final tableFuture = _repo.getStatsRaw(dateFilters); // Solo fecha para tablas
       final metadataFuture = _repo.getFilterMetadata(dateFilters);
       if (_apps.isEmpty) {
         try {
@@ -181,10 +188,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
       if (!mounted) return;
       _cachedRawRows = full;
+      _cachedTableRawRows = await tableFuture;
+      _tableRawRows = _cachedTableRawRows;
       _cachedStartDate = _filters.startDateStr;
       _cachedEndDate = _filters.endDateStr;
       _cachedFilterKey = _filterKey;
-      _displayStats ??= _stats;
       _applyFiltersFromCache();
       try {
         _filterMetadataRows = await metadataFuture;
@@ -193,6 +201,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() => _loading = false);
     } catch (e) {
       if (mounted) {
+        if (_isKeysError(e.toString())) {
+          context.go('/credentials');
+          return;
+        }
         setState(() {
           _error = _isNetworkError(e.toString())
               ? AppStrings.t('no_internet', LocaleNotifier.current)
@@ -287,24 +299,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final locale = LocaleNotifier.current;
-    return Scaffold(
+    return ValueListenableBuilder<String>(
+      valueListenable: LocaleNotifier.valueNotifier,
+      builder: (context, locale, _) => Scaffold(
       appBar: AppBar(
+        toolbarHeight: 44,
         flexibleSpace: Container(
-          decoration: BoxDecoration(
+          decoration: const BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                Theme.of(context).colorScheme.surface,
-                Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
-              ],
+              colors: [_heroBlueStart, _heroBlueEnd],
             ),
           ),
         ),
         leading: IconButton(
           icon: Icon(
             ThemeModeNotifier.current == ThemeMode.light ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
+            color: _heroTextPrimary,
           ),
           onPressed: () {
             ThemeModeNotifier.set(
@@ -313,13 +325,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
           },
           tooltip: ThemeModeNotifier.current == ThemeMode.light ? AppStrings.t('dark_mode', locale) : AppStrings.t('light_mode', locale),
         ),
-        title: Text(AppStrings.t('dashboard_tab', LocaleNotifier.current)),
+        title: Text(
+          _currentTabIndex == 0 ? AppStrings.t('tab_home', locale)
+              : _currentTabIndex == 1 ? AppStrings.t('tab_table', locale)
+              : AppStrings.t('tab_details', locale),
+          style: const TextStyle(color: _heroTextPrimary, fontSize: 17),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.settings, color: _heroTextPrimary),
             onPressed: () => context.push('/credentials'),
             tooltip: AppStrings.t('settings_tooltip', locale),
           ),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentTabIndex,
+        onDestinationSelected: (i) {
+          setState(() => _currentTabIndex = i);
+          final page = i == 0 ? 0 : i == 1 ? 1 : 2 + _detailsMetricIndex;
+          _mainPageController.animateToPage(page, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+        },
+        destinations: [
+          NavigationDestination(icon: const Icon(Icons.home_outlined), selectedIcon: const Icon(Icons.home), label: AppStrings.t('tab_home', locale)),
+          NavigationDestination(icon: const Icon(Icons.table_chart_outlined), selectedIcon: const Icon(Icons.table_chart), label: AppStrings.t('tab_table', locale)),
+          NavigationDestination(icon: const Icon(Icons.bar_chart_outlined), selectedIcon: const Icon(Icons.bar_chart), label: AppStrings.t('tab_details', locale)),
         ],
       ),
       body: RefreshIndicator(
@@ -332,51 +362,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: _loading && _stats == null
             ? const Center(child: CircularProgressIndicator())
             : _error != null && _stats == null
-                ? _ErrorBody(
+                ? ErrorRetryBody(
                     message: _DashboardScreenState._isKeysError(_error)
                         ? AppStrings.t('invalid_keys', locale)
                         : _error!,
+                    isNetworkError: _DashboardScreenState._isNetworkError(_error ?? ''),
                     onRetry: _load,
                   )
                 : Stack(
                     children: [
-                      SingleChildScrollView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
-                            child: LayoutBuilder(
-                              builder: (context, constraints) {
-                                final padding = constraints.maxWidth > 900 ? 24.0 : (constraints.maxWidth > 600 ? 20.0 : 12.0);
-                                return Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: padding),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                                    children: [
-                                      _buildDateFilters(),
-                                      SizedBox(height: padding),
-                                      if (_stats != null) ...[
-                                        _buildFiltersSection(),
-                                        SizedBox(height: padding),
-                                        _buildMainHeroCard(locale),
-                                        const SizedBox(height: 12),
-                                        _buildMetricNavButtons(locale),
-                                        SizedBox(height: padding),
-                                        _buildStatsGrid(_stats!, constraints.maxWidth),
-                                        SizedBox(height: padding * 1.2),
-                                        _buildCountriesSection(),
-                                        SizedBox(height: padding),
-                                        _buildDataTable(constraints.maxWidth),
-                                      ],
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
+                      PageView(
+                        controller: _mainPageController,
+                        physics: const BouncingScrollPhysics(),
+                        onPageChanged: (i) {
+                          setState(() {
+                            if (i == 0) {
+                              _currentTabIndex = 0;
+                            } else if (i == 1) {
+                              _currentTabIndex = 1;
+                            } else {
+                              _currentTabIndex = 2;
+                              _detailsMetricIndex = i - 2;
+                            }
+                          });
+                        },
+                        children: [
+                          _buildHomeTab(locale),
+                          _buildTableTab(locale),
+                          ...List.generate(_metricIds.length, (j) => _buildDetailPageWithFilters(_metricIds[j], locale)),
+                        ],
                       ),
                       if (_loading && _stats != null)
                         Positioned(
@@ -386,32 +400,435 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           child: Material(
                             elevation: 0,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                               color: Theme.of(context).colorScheme.primaryContainer,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Theme.of(context).colorScheme.primary,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                    AppStrings.t('loading_data', locale),
-                                    style: Theme.of(context).textTheme.titleSmall,
-                                  ),
-                                ],
+                              child: Center(
+                                child: WaveLoadingIndicator(
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
                               ),
                             ),
                           ),
                         ),
+                      AskAiChatBubble(dataSummary: _buildDataSummaryForAi()),
                     ],
                   ),
       ),
+    ));
+  }
+
+  Widget _buildHomeTab(String locale) {
+    final width = MediaQuery.of(context).size.width;
+    final padding = width > 900 ? 24.0 : (width > 600 ? 20.0 : 12.0);
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(padding, 8, padding, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildDateFilters(),
+          SizedBox(height: padding),
+          if (_stats != null) ...[
+            _buildFiltersSection(),
+            SizedBox(height: padding),
+            _buildMainHeroCard(locale),
+            SizedBox(height: padding),
+            ..._buildSecondaryCardsList(locale),
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildSecondaryCardsList(String locale) {
+    final s = _stats!;
+    final l = LocaleNotifier.current;
+    final items = <Widget>[
+      _buildSecondaryCardRow(AppStrings.t('revenue', l), formatMoney(s.revenue), Icons.monetization_on_outlined, 'revenue', 0),
+      _buildSecondaryCardRow(AppStrings.t('impressions', l), formatNumber(s.impressions), Icons.visibility, 'impressions', 0),
+      _buildSecondaryCardRow(AppStrings.t('ecpm', l), formatMoney(s.ecpm), Icons.trending_up, 'ecpm', 0),
+    ];
+    if (s.clicks != null) items.add(_buildSecondaryCardRow(AppStrings.t('clicks', l), formatNumber(s.clicks!), Icons.touch_app, 'clicks', 0));
+    if (s.completions != null) items.add(_buildSecondaryCardRow(AppStrings.t('completions', l), formatNumber(s.completions!), Icons.check_circle, 'completions', 0));
+    if (s.fillRate != null && s.fillRate! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('fill_rate', l), '${formatDecimal(s.fillRate!)}%', Icons.pie_chart_outline, 'fill_rate', 0));
+    if (s.completionRate != null && s.completionRate! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('completion_rate', l), '${formatDecimal(s.completionRate!)}%', Icons.done_all, 'completion_rate', 0));
+    if (s.revenuePerCompletion != null && s.revenuePerCompletion! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('revenue_per_completion', l), formatMoney(s.revenuePerCompletion!), Icons.monetization_on_outlined, 'revenue_per_completion', 0));
+    if (s.ctr != null && s.ctr! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('ctr', l), '${formatDecimal(s.ctr!)}%', Icons.ads_click, 'ctr', 0));
+    if (s.appRequests != null && s.appRequests! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('app_requests', l), formatNumber(s.appRequests!), Icons.sync, 'app_requests', 0));
+    if (s.dau != null && s.dau! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('dau', l), formatNumber(s.dau!), Icons.people, 'dau', 0));
+    if (s.sessions != null && s.sessions! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('sessions', l), formatNumber(s.sessions!), Icons.event_note, 'sessions', 0));
+    return items;
+  }
+
+  Widget _buildSecondaryCardRow(String title, String value, IconData icon, String metricId, int _) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _goToDetailTab(metricId),
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(title, style: Theme.of(context).textTheme.labelMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                      Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+                Icon(Icons.arrow_forward_ios, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTableTab(String locale) {
+    final width = MediaQuery.of(context).size.width;
+    final padding = width > 900 ? 24.0 : (width > 600 ? 20.0 : 12.0);
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(padding, 8, padding, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildDateFilters(),
+          SizedBox(height: padding),
+          if (_stats != null) ...[
+            _buildCollapsibleTableSections(padding),
+          ],
+        ],
+      ),
+    );
+  }
+
+  bool _totalsByDayExpanded = true;
+  bool _byCountryExpanded = false;
+  bool _byAppExpanded = false;
+  bool _byAdExpanded = false;
+  bool _byPlatformExpanded = false;
+
+  Widget _buildCollapsibleTableSections(double padding) {
+    final width = MediaQuery.of(context).size.width;
+    final l = LocaleNotifier.current;
+    return Column(
+      children: [
+        _buildCollapsibleSection(
+          title: AppStrings.t('totals_by_day', l),
+          expanded: _totalsByDayExpanded,
+          onToggle: () => setState(() => _totalsByDayExpanded = !_totalsByDayExpanded),
+          child: _buildDataTable(width, showHeader: false),
+        ),
+        SizedBox(height: padding),
+        _buildCollapsibleSection(
+          title: AppStrings.t('by_country', l),
+          expanded: _byCountryExpanded,
+          onToggle: () => setState(() => _byCountryExpanded = !_byCountryExpanded),
+          child: _buildCountriesSection(),
+        ),
+        SizedBox(height: padding),
+        _buildCollapsibleSection(
+          title: AppStrings.t('by_app', l),
+          expanded: _byAppExpanded,
+          onToggle: () => setState(() => _byAppExpanded = !_byAppExpanded),
+          child: _buildByAppSection(width),
+        ),
+        SizedBox(height: padding),
+        _buildCollapsibleSection(
+          title: AppStrings.t('by_ad', l),
+          expanded: _byAdExpanded,
+          onToggle: () => setState(() => _byAdExpanded = !_byAdExpanded),
+          child: _buildByAdSection(width),
+        ),
+        SizedBox(height: padding),
+        _buildCollapsibleSection(
+          title: AppStrings.t('by_platform', l),
+          expanded: _byPlatformExpanded,
+          onToggle: () => setState(() => _byPlatformExpanded = !_byPlatformExpanded),
+          child: _buildByPlatformSection(width),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCollapsibleSection({
+    required String title,
+    required bool expanded,
+    required VoidCallback onToggle,
+    required Widget child,
+  }) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                child: Row(
+                  children: [
+                    Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                    const Spacer(),
+                    AnimatedRotation(
+                      turns: expanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Icon(Icons.expand_more, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            firstChild: const SizedBox.shrink(),
+            secondChild: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: child,
+            ),
+            crossFadeState: expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 220),
+            sizeCurve: Curves.easeOut,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _appKeyToName(String? appKey) {
+    if (appKey == null || appKey.isEmpty) return '-';
+    final matching = _apps.where((a) => a.appKey == appKey).toList();
+    if (matching.isEmpty) return appKey;
+    final name = matching.first.appName ?? matching.first.appKey ?? appKey;
+    final platforms = matching.map((a) => (a.platform ?? '').toLowerCase()).where((p) => p.isNotEmpty).toSet().toList()..sort();
+    if (platforms.isEmpty) return name;
+    final platLabel = platforms.map((p) => p == 'ios' ? AppStrings.t('ios', LocaleNotifier.current) : p == 'android' ? AppStrings.t('android', LocaleNotifier.current) : p).join(', ');
+    return '$name ($platLabel)';
+  }
+
+  Widget _buildByAppSection(double width) {
+    final byApp = _aggregateByApp();
+    final l = LocaleNotifier.current;
+    if (byApp.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(AppStrings.t('no_data_table', l), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      );
+    }
+    return _buildGenericTable(
+      rows: byApp.take(12).toList(),
+      labelKey: 'appKey',
+      labelFormatter: (v) => _appKeyToName(v),
+    );
+  }
+
+  Widget _buildByAdSection(double width) {
+    final byAd = _aggregateByAdUnit();
+    final l = LocaleNotifier.current;
+    if (byAd.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(AppStrings.t('no_data_table', l), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      );
+    }
+    final adLabels = {
+      'rewardedVideo': AppStrings.t('rewarded_video', l),
+      'interstitial': AppStrings.t('interstitial', l),
+      'banner': AppStrings.t('banner', l),
+      'offerWall': AppStrings.t('offerwall', l),
+    };
+    return _buildGenericTable(
+      rows: byAd.take(12).toList(),
+      labelKey: 'adUnit',
+      labelFormatter: (v) => adLabels[v ?? ''] ?? (v ?? '-'),
+    );
+  }
+
+  Widget _buildByPlatformSection(double width) {
+    final byPlatform = _aggregateByPlatform();
+    final l = LocaleNotifier.current;
+    if (byPlatform.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(AppStrings.t('no_data_table', l), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      );
+    }
+    final platformLabels = {'android': AppStrings.t('android', l), 'ios': AppStrings.t('ios', l)};
+    return _buildGenericTable(
+      rows: byPlatform.take(12).toList(),
+      labelKey: 'platform',
+      labelFormatter: (v) => platformLabels[v ?? ''] ?? (v ?? '-'),
+    );
+  }
+
+  Widget _buildGenericTable({
+    required List<Map<String, dynamic>> rows,
+    required String labelKey,
+    required String Function(String?) labelFormatter,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final colLabel = (w * 0.45).clamp(80.0, 220.0);
+        final colRev = (w * 0.28).clamp(55.0, 100.0);
+        final colImp = (w * 0.27).clamp(55.0, 100.0);
+        final smallFont = w < 320;
+        final labelStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w500,
+          fontSize: smallFont ? 11 : null,
+        );
+        final numStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          fontSize: smallFont ? 10 : null,
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                SizedBox(width: colLabel, child: const SizedBox()),
+                SizedBox(width: colRev, child: Text(AppStrings.t('revenue', LocaleNotifier.current), style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600, color: cs.onSurfaceVariant, fontSize: smallFont ? 10 : null), textAlign: TextAlign.end, overflow: TextOverflow.ellipsis)),
+                SizedBox(width: colImp, child: Text(AppStrings.t('impressions', LocaleNotifier.current), style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600, color: cs.onSurfaceVariant, fontSize: smallFont ? 10 : null), textAlign: TextAlign.end, overflow: TextOverflow.ellipsis)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ...rows.map((r) {
+              final label = labelFormatter(r[labelKey] as String?);
+              final rev = (r['revenue'] as num).toDouble();
+              final imp = r['impressions'] as int;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    SizedBox(width: colLabel, child: Text(label, style: labelStyle, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    SizedBox(width: colRev, child: Text(formatMoney(rev), style: numStyle?.copyWith(color: cs.primary), textAlign: TextAlign.end, overflow: TextOverflow.ellipsis)),
+                    SizedBox(width: colImp, child: Text(formatNumber(imp), style: numStyle, textAlign: TextAlign.end, overflow: TextOverflow.ellipsis)),
+                  ],
+                ),
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+
+  List<Map<String, dynamic>> _aggregateByApp() {
+    final byApp = <String, Map<String, dynamic>>{};
+    for (final row in _filterMetadataRows) {
+      final appKey = (row.appKey ?? '').trim().isEmpty ? '__all__' : row.appKey!.trim();
+      for (final d in row.data ?? []) {
+        final rev = _rev(d);
+        final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
+        if (!byApp.containsKey(appKey)) byApp[appKey] = {'appKey': appKey, 'revenue': 0.0, 'impressions': 0};
+        byApp[appKey]!['revenue'] = (byApp[appKey]!['revenue'] as num) + rev;
+        byApp[appKey]!['impressions'] = (byApp[appKey]!['impressions'] as int) + imp;
+      }
+    }
+    return byApp.entries
+        .where((e) => e.key != '__all__')
+        .map((e) => {'appKey': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']})
+        .toList()
+      ..sort((a, b) => (b['revenue'] as num).compareTo(a['revenue'] as num));
+  }
+
+  List<Map<String, dynamic>> _aggregateByAdUnit() {
+    final byAd = <String, Map<String, dynamic>>{};
+    for (final row in _filterMetadataRows) {
+      final adStr = (row.adUnits ?? '').toLowerCase();
+      String key = 'unknown';
+      if (adStr.contains('rewarded')) key = 'rewardedVideo';
+      else if (adStr.contains('interstitial')) key = 'interstitial';
+      else if (adStr.contains('banner')) key = 'banner';
+      else if (adStr.contains('offer')) key = 'offerWall';
+      for (final d in row.data ?? []) {
+        final rev = _rev(d);
+        final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
+        if (!byAd.containsKey(key)) byAd[key] = {'adUnit': key, 'revenue': 0.0, 'impressions': 0};
+        byAd[key]!['revenue'] = (byAd[key]!['revenue'] as num) + rev;
+        byAd[key]!['impressions'] = (byAd[key]!['impressions'] as int) + imp;
+      }
+    }
+    const order = ['rewardedVideo', 'interstitial', 'banner', 'offerWall', 'unknown'];
+    return byAd.entries
+        .map((e) => {'adUnit': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']})
+        .toList()
+      ..sort((a, b) {
+        final ai = order.indexOf(a['adUnit'] as String);
+        final bi = order.indexOf(b['adUnit'] as String);
+        if (ai >= 0 && bi >= 0) return ai.compareTo(bi);
+        return (b['revenue'] as num).compareTo(a['revenue'] as num);
+      });
+  }
+
+  List<Map<String, dynamic>> _aggregateByPlatform() {
+    final byPlatform = <String, Map<String, dynamic>>{};
+    for (final row in _filterMetadataRows) {
+      final platform = (row.platform ?? '').trim().toLowerCase().isEmpty ? '__all__' : (row.platform ?? '').trim().toLowerCase();
+      for (final d in row.data ?? []) {
+        final rev = _rev(d);
+        final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
+        if (!byPlatform.containsKey(platform)) byPlatform[platform] = {'platform': platform, 'revenue': 0.0, 'impressions': 0};
+        byPlatform[platform]!['revenue'] = (byPlatform[platform]!['revenue'] as num) + rev;
+        byPlatform[platform]!['impressions'] = (byPlatform[platform]!['impressions'] as int) + imp;
+      }
+    }
+    return byPlatform.entries
+        .where((e) => e.key != '__all__')
+        .map((e) => {'platform': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']})
+        .toList()
+      ..sort((a, b) => (b['revenue'] as num).compareTo(a['revenue'] as num));
+  }
+
+  /// Una página de detalle con filtros (para PageView unificado: swipe desde revenue va a Table).
+  Widget _buildDetailPageWithFilters(String metricId, String locale) {
+    final width = MediaQuery.of(context).size.width;
+    final padding = width > 900 ? 24.0 : (width > 600 ? 20.0 : 12.0);
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(padding, 8, padding, 0),
+            child: _buildDateFilters(),
+          ),
+          SizedBox(height: padding),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: padding),
+            child: _buildFiltersSection(),
+          ),
+          const SizedBox(height: 4),
+          _buildDetailPage(metricId, locale),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailPage(String metricId, String locale) {
+    return MetricDetailContent(
+      rawRows: _rawRows,
+      filters: _filters,
+      prevStats: _displayPrevStats,
+      metricId: metricId,
     );
   }
 
@@ -421,15 +838,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          _presetChip('Hoy', DateRangePreset.today, compact),
+          _presetChip(AppStrings.t('preset_today', LocaleNotifier.current), DateRangePreset.today, compact),
           SizedBox(width: compact ? 4 : 8),
-          _presetChip('Ayer', DateRangePreset.yesterday, compact),
+          _presetChip(AppStrings.t('preset_yesterday', LocaleNotifier.current), DateRangePreset.yesterday, compact),
           SizedBox(width: compact ? 4 : 8),
-          _presetChip('7d', DateRangePreset.last7, compact),
+          _presetChip(AppStrings.t('preset_7d', LocaleNotifier.current), DateRangePreset.last7, compact),
           SizedBox(width: compact ? 4 : 8),
-          _presetChip('30d', DateRangePreset.last30, compact),
+          _presetChip(AppStrings.t('preset_30d', LocaleNotifier.current), DateRangePreset.last30, compact),
           SizedBox(width: compact ? 4 : 8),
-          _presetChip('90d', DateRangePreset.last90, compact),
+          _presetChip(AppStrings.t('preset_90d', LocaleNotifier.current), DateRangePreset.last90, compact),
           SizedBox(width: compact ? 4 : 8),
           FilterChip(
             label: Text(compact ? AppStrings.t('filter_date', LocaleNotifier.current) : AppStrings.t('filter_custom', LocaleNotifier.current)),
@@ -461,26 +878,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _wrapMetricCard(String title, String value, IconData icon, [String? metricId]) {
-    final id = metricId ?? _statCardMetricIds[title] ?? 'revenue';
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () async {
-          await _saveFilters();
-          if (!context.mounted) return;
-          context.push('/dashboard/metric/$id');
-        },
-        borderRadius: BorderRadius.circular(16),
-        child: StatCard(
-          title: title,
-          value: value,
-          icon: icon,
-        ),
-      ),
-    );
-  }
-
   String _prevPeriodLabel(String locale) {
     switch (_displayDatePreset) {
       case DateRangePreset.today:
@@ -498,9 +895,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  void _goToDetailTab(String metricId) {
+    final idx = _metricIds.indexOf(metricId);
+    if (idx < 0) return;
+    setState(() {
+      _currentTabIndex = 2;
+      _detailsMetricIndex = idx;
+    });
+    _mainPageController.animateToPage(
+      2 + idx,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  static const Color _heroBlueStart = Color(0xFF0D47A1);
+  static const Color _heroBlueEnd = Color(0xFF1565C0);
+  static const Color _heroTextPrimary = Color(0xFFFFFFFF);
+  static const Color _heroTextMuted = Color(0xFFBBDEFB);
+
   Widget _buildMainHeroCard(String locale) {
     final s = (_displayStats ?? _stats)!;
-    final cs = Theme.of(context).colorScheme;
     final showCompare = !_loading &&
         _displayDatePreset != DateRangePreset.custom &&
         (_displayPrevStats ?? _prevStats) != null;
@@ -527,13 +942,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
+          gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              cs.primary.withValues(alpha: 0.12),
-              cs.tertiary.withValues(alpha: 0.06),
-            ],
+            colors: [_heroBlueStart, _heroBlueEnd],
           ),
         ),
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
@@ -545,7 +957,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 fontSize: 15,
                 fontWeight: FontWeight.bold,
-                color: cs.onSurfaceVariant.withValues(alpha: 0.75),
+                color: _heroTextMuted,
               ),
             ),
             const SizedBox(height: 2),
@@ -553,7 +965,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               formatMoney(s.revenue),
               style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                 fontWeight: FontWeight.bold,
-                color: const Color(0xFF5BA3E8),
+                color: _heroTextPrimary,
               ),
             ),
             if (revPct != null && prevLabel.isNotEmpty) ...[
@@ -561,7 +973,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Text(
                 '${revPct >= 0 ? '+' : ''}${revPct.toStringAsFixed(1)}% $prevLabel',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: revPct >= 0 ? Colors.green : Colors.red,
+                  color: revPct >= 0 ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A),
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -578,7 +990,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Text.rich(
                         TextSpan(
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant,
+                            color: _heroTextMuted,
                             fontWeight: FontWeight.w500,
                             fontSize: 12,
                           ),
@@ -588,7 +1000,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               TextSpan(
                                 text: ' ${impPct >= 0 ? '+' : ''}${impPct.toStringAsFixed(1)}%',
                                 style: TextStyle(
-                                  color: impPct >= 0 ? Colors.green : Colors.red,
+                                  color: impPct >= 0 ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A),
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
@@ -600,7 +1012,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         formatNumber(s.impressions),
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           fontWeight: FontWeight.w600,
-                          color: cs.onSurface,
+                          color: _heroTextPrimary,
                         ),
                       ),
                     ],
@@ -614,7 +1026,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Text.rich(
                         TextSpan(
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: cs.onSurfaceVariant,
+                            color: _heroTextMuted,
                             fontWeight: FontWeight.w500,
                             fontSize: 12,
                           ),
@@ -624,7 +1036,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               TextSpan(
                                 text: ' ${ecpmPct >= 0 ? '+' : ''}${ecpmPct.toStringAsFixed(1)}%',
                                 style: TextStyle(
-                                  color: ecpmPct >= 0 ? Colors.green : Colors.red,
+                                  color: ecpmPct >= 0 ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A),
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
@@ -636,7 +1048,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         formatMoney(s.ecpm),
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           fontWeight: FontWeight.w600,
-                          color: cs.onSurface,
+                          color: _heroTextPrimary,
                         ),
                       ),
                     ],
@@ -650,120 +1062,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildMetricNavButtons(String locale) {
-    return Row(
-      children: [
-        Expanded(
-          child: _navChip(AppStrings.t('revenue', locale), 'revenue'),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _navChip(AppStrings.t('impressions', locale), 'impressions'),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _navChip(AppStrings.t('ecpm', locale), 'ecpm'),
-        ),
-      ],
-    );
-  }
-
-  Widget _navChip(String label, String metricId) {
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.8),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: () async {
-          await _saveFilters();
-          if (!context.mounted) return;
-          context.push('/dashboard/metric/$metricId');
-        },
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  label,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.arrow_forward_ios, size: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatsGrid(DashboardStats s, double width) {
-    final l = LocaleNotifier.current;
-    final crossCount = width > 900 ? 4 : (width > 600 ? 3 : 2);
-    final cards = <Widget>[
-      if (s.clicks != null)
-        _wrapMetricCard(AppStrings.t('clicks', l), formatNumber(s.clicks!), Icons.touch_app, 'clicks'),
-      if (s.completions != null)
-        _wrapMetricCard(AppStrings.t('completions', l), formatNumber(s.completions!), Icons.check_circle, 'completions'),
-      if (s.fillRate != null && s.fillRate! > 0)
-        _wrapMetricCard(AppStrings.t('fill_rate', l), '${formatDecimal(s.fillRate!)}%', Icons.pie_chart_outline, 'fill_rate'),
-      if (s.completionRate != null && s.completionRate! > 0)
-        _wrapMetricCard(AppStrings.t('completion_rate', l), '${formatDecimal(s.completionRate!)}%', Icons.done_all, 'completion_rate'),
-      if (s.revenuePerCompletion != null && s.revenuePerCompletion! > 0)
-        _wrapMetricCard(AppStrings.t('revenue_per_completion', l), formatMoney(s.revenuePerCompletion!), Icons.monetization_on_outlined, 'revenue_per_completion'),
-      if (s.ctr != null && s.ctr! > 0)
-        _wrapMetricCard(AppStrings.t('ctr', l), '${formatDecimal(s.ctr!)}%', Icons.ads_click, 'ctr'),
-      if (s.appRequests != null && s.appRequests! > 0)
-        _wrapMetricCard(AppStrings.t('app_requests', l), formatNumber(s.appRequests!), Icons.sync, 'app_requests'),
-      if (s.dau != null && s.dau! > 0)
-        _wrapMetricCard(AppStrings.t('dau', l), formatNumber(s.dau!), Icons.people, 'dau'),
-      if (s.sessions != null && s.sessions! > 0)
-        _wrapMetricCard(AppStrings.t('sessions', l), formatNumber(s.sessions!), Icons.event_note, 'sessions'),
-    ];
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: crossCount,
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: width > 600 ? 1.5 : 1.25,
-      children: cards,
-    );
-  }
-
-  /// Filas de metadata filtradas por los filtros actuales (para tabla por país).
-  List<IronSourceStatsRow> get _filteredMetadataRows {
-    if (_filterMetadataRows.isEmpty) return [];
-    final appKeys = _filters.appKeys;
-    final countries = _filters.countries;
-    final adUnits = _filters.adUnits;
-    final platforms = _filters.platforms;
-    final hasApp = appKeys != null && appKeys.isNotEmpty;
-    final hasCountry = countries != null && countries.isNotEmpty;
-    final hasAdUnit = adUnits != null && adUnits.isNotEmpty;
-    final hasPlatform = platforms != null && platforms.isNotEmpty;
-    if (!hasApp && !hasCountry && !hasAdUnit && !hasPlatform) return _filterMetadataRows;
-    return _filterMetadataRows.where((row) {
-      if (hasApp && !appKeys.contains((row.appKey ?? '').trim())) return false;
-      if (hasCountry && !countries.contains((row.country ?? '').trim().toUpperCase())) return false;
-      if (hasPlatform && !platforms.contains((row.platform ?? '').trim().toLowerCase())) return false;
-      if (hasAdUnit) {
-        final rowAd = (row.adUnits ?? '').toLowerCase();
-        final matches = adUnits.any((f) => rowAd.contains(f.toLowerCase()) || f.toLowerCase().contains(rowAd) || (f == 'rewardedVideo' && rowAd.contains('rewarded')) || (f == 'offerWall' && rowAd.contains('offer')));
-        if (!matches) return false;
-      }
-      return true;
-    }).toList();
-  }
-
   List<Map<String, dynamic>> _aggregateByCountry() {
     final byCountry = <String, Map<String, dynamic>>{};
-    for (final row in _filteredMetadataRows) {
+    for (final row in _filterMetadataRows) {
       final countryKey = (row.country ?? '').trim().isEmpty ? '__all__' : (row.country!.trim().toUpperCase());
       for (final d in row.data ?? []) {
         final rev = _rev(d);
@@ -795,72 +1096,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ..sort((a, b) => (b['revenue'] as num).compareTo(a['revenue'] as num));
   }
 
+  /// Resumen de datos en texto para enviar a la IA (Ask AI).
+  String _buildDataSummaryForAi() {
+    final s = _stats!;
+    final period = _displayDatePreset == DateRangePreset.last7
+        ? 'Last 7 days'
+        : _displayDatePreset == DateRangePreset.last30
+            ? 'Last 30 days'
+            : _displayDatePreset == DateRangePreset.last90
+                ? 'Last 90 days'
+                : _displayDatePreset == DateRangePreset.today
+                    ? 'Today'
+                    : _displayDatePreset == DateRangePreset.yesterday
+                        ? 'Yesterday'
+                        : 'Selected period';
+    final buf = StringBuffer();
+    buf.writeln('Period: $period');
+    buf.writeln('Revenue: \$${s.revenue.toStringAsFixed(2)}');
+    buf.writeln('Impressions: ${s.impressions}');
+    buf.writeln('eCPM: \$${s.ecpm.toStringAsFixed(2)}');
+    if (s.clicks != null) buf.writeln('Clicks: ${s.clicks}');
+    if (s.completions != null) buf.writeln('Completions: ${s.completions}');
+    if (s.fillRate != null) buf.writeln('Fill rate: ${s.fillRate!.toStringAsFixed(1)}%');
+    if (s.completionRate != null) buf.writeln('Completion rate: ${s.completionRate!.toStringAsFixed(1)}%');
+    if (s.ctr != null) buf.writeln('CTR: ${s.ctr!.toStringAsFixed(2)}%');
+    final byCountry = _aggregateByCountry();
+    if (byCountry.isNotEmpty) {
+      buf.writeln('\nBy country:');
+      for (final r in byCountry.take(30)) {
+        final code = r['countryCode'] as String? ?? '';
+        final name = formatCountry(code, LocaleNotifier.current);
+        buf.writeln('  $name ($code): revenue \$${(r['revenue'] as num).toStringAsFixed(2)}, impressions ${r['impressions']}');
+      }
+    }
+    return buf.toString();
+  }
+
+  /// Contenido de la tabla por país (sin Card, para usar dentro de sección colapsable).
   Widget _buildCountriesSection() {
     final byCountry = _aggregateByCountry();
-    final cs = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              cs.primary.withValues(alpha: 0.1),
-              cs.tertiary.withValues(alpha: 0.06),
-            ],
-          ),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.25),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(Icons.public, color: Theme.of(context).colorScheme.tertiary, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  AppStrings.t('by_country', LocaleNotifier.current),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (byCountry.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text(
-                  AppStrings.t('country_table_discrepancy', LocaleNotifier.current),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontSize: 10,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                  ),
-                ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (byCountry.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              AppStrings.t('no_country_data', LocaleNotifier.current),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
-            if (byCountry.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  AppStrings.t('no_country_data', LocaleNotifier.current),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              )
-            else
-              Column(
+            ),
+          )
+        else ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              AppStrings.t('country_table_discrepancy', LocaleNotifier.current),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontSize: 10,
+                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ),
+          ),
+          Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   LayoutBuilder(
@@ -964,9 +1263,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ],
               ),
-          ],
-        ),
-      ),
+        ],
+      ],
     );
   }
 
@@ -1279,7 +1577,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   List<Map<String, dynamic>> _aggregateRowsByDate() {
     final byDate = <String, Map<String, dynamic>>{};
-    for (final row in _rawRows) {
+    for (final row in _tableRawRows) {
       final date = row.date ?? '';
       if (date.isEmpty) continue;
       for (final d in row.data ?? []) {
@@ -1383,128 +1681,72 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _cell(String text) => Tooltip(message: text, child: SelectableText(text));
 
-  Widget _buildDataTable(double width) {
-    if (_rawRows.isEmpty) {
-      return Card(
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Center(child: Text(AppStrings.t('no_data_table', LocaleNotifier.current))),
-        ),
+  Widget _buildDataTable(double width, {bool showHeader = true}) {
+    if (_tableRawRows.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Center(child: Text(AppStrings.t('no_data_table', LocaleNotifier.current))),
       );
     }
     final aggregated = _aggregateRowsByDate();
-    final cs = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              cs.primary.withValues(alpha: 0.1),
-              cs.tertiary.withValues(alpha: 0.05),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showHeader) ...[
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: _heroBlueStart.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.table_chart, color: _heroTextPrimary, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                AppStrings.t('totals_by_day', LocaleNotifier.current),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: cs.primary.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(Icons.table_chart, color: cs.primary, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  AppStrings.t('totals_by_day', LocaleNotifier.current),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                headingRowColor: WidgetStateProperty.all(
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
-                ),
-                dataRowColor: WidgetStateProperty.resolveWith((states) => null),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                columns: [
-                  DataColumn(label: Text(AppStrings.t('date', LocaleNotifier.current))),
-                  DataColumn(label: Text(AppStrings.t('income', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('impressions', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('ecpm', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('clicks', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('completions', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('fill_rate', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('completion_rate', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('rev_comp', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('ctr', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('app_requests', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('dau', LocaleNotifier.current)), numeric: true),
-                  DataColumn(label: Text(AppStrings.t('sessions', LocaleNotifier.current)), numeric: true),
-                ],
-                rows: _dataTableRows(aggregated),
+          const SizedBox(height: 16),
+        ],
+        ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              headingRowColor: WidgetStateProperty.all(
+                _heroBlueStart,
               ),
+              headingTextStyle: Theme.of(context).textTheme.titleSmall!.copyWith(
+                color: _heroTextMuted,
+                fontWeight: FontWeight.w600,
+              ),
+              columns: [
+                DataColumn(label: Text(AppStrings.t('date', LocaleNotifier.current))),
+                DataColumn(label: Text(AppStrings.t('income', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('impressions', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('ecpm', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('clicks', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('completions', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('fill_rate', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('completion_rate', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('rev_comp', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('ctr', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('app_requests', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('dau', LocaleNotifier.current)), numeric: true),
+                DataColumn(label: Text(AppStrings.t('sessions', LocaleNotifier.current)), numeric: true),
+              ],
+              rows: _dataTableRows(aggregated),
             ),
-          ],
+          ),
         ),
-      ),
-    );
-  }
-}
-
-class _ErrorBody extends StatelessWidget {
-  const _ErrorBody({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline_rounded,
-              size: 56,
-              color: Theme.of(context).colorScheme.error.withValues(alpha: 0.9),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh),
-              label: Text(AppStrings.t('retry', LocaleNotifier.current)),
-            ),
-          ],
-        ),
-      ),
+      ],
     );
   }
 }

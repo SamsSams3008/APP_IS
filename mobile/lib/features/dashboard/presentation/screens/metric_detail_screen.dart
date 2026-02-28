@@ -8,7 +8,9 @@ import '../../../../core/theme/theme_mode_notifier.dart';
 import '../../../../data/credentials/credentials_repository.dart';
 import '../../../../data/ironsource/ironsource_api_client.dart';
 import '../../../../shared/utils/formatters.dart';
+import '../../../../shared/widgets/error_retry_body.dart';
 import '../../../../shared/widgets/multi_select_dialog.dart';
+import '../../../../shared/widgets/wave_loading_indicator.dart';
 import '../../../glossary/glossary_data.dart';
 import '../../data/dashboard_repository.dart';
 import '../../domain/dashboard_filters.dart';
@@ -98,8 +100,6 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     setState(() {
       _loading = true;
       _error = null;
-      _rawRows = [];
-      _cachedRawRows = [];
     });
     try {
       final dateFilters = DashboardFilters(
@@ -468,11 +468,12 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final locale = LocaleNotifier.current;
-    final entry = getGlossaryEntry(widget.metricId);
-    final title = entry != null ? getGlossaryTitle(entry.id, locale) : widget.metricId;
-
-    return PopScope(
+    return ValueListenableBuilder<String>(
+      valueListenable: LocaleNotifier.valueNotifier,
+      builder: (context, locale, _) {
+        final entry = getGlossaryEntry(widget.metricId);
+        final title = entry != null ? getGlossaryTitle(entry.id, locale) : widget.metricId;
+        return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
@@ -502,34 +503,12 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       body: _loading && _rawRows.isEmpty
           ? const Center(child: CircularProgressIndicator())
           : _error != null && _rawRows.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.error_outline_rounded,
-                          size: 56,
-                          color: Theme.of(context).colorScheme.error.withValues(alpha: 0.9),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _MetricDetailScreenState._isKeysError(_error)
-                              ? AppStrings.t('invalid_keys', locale)
-                              : _error!,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
-                        const SizedBox(height: 24),
-                        FilledButton.icon(
-                          onPressed: _load,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Reintentar'),
-                        ),
-                      ],
-                    ),
-                  ),
+              ? ErrorRetryBody(
+                  message: _MetricDetailScreenState._isKeysError(_error)
+                      ? AppStrings.t('invalid_keys', locale)
+                      : _error!,
+                  isNetworkError: _MetricDetailScreenState._isNetworkError(_error ?? ''),
+                  onRetry: _load,
                 )
               : RefreshIndicator(
                   onRefresh: () {
@@ -572,25 +551,12 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                           child: Material(
                             elevation: 0,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                               color: Theme.of(context).colorScheme.primaryContainer,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Theme.of(context).colorScheme.primary,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                    'Cargando…',
-                                    style: Theme.of(context).textTheme.titleSmall,
-                                  ),
-                                ],
+                              child: Center(
+                                child: WaveLoadingIndicator(
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
                               ),
                             ),
                           ),
@@ -599,6 +565,8 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                   ),
                 ),
       ),
+    );
+      },
     );
   }
 

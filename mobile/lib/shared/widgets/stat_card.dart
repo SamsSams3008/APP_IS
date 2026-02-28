@@ -34,7 +34,7 @@ class StatCard extends StatelessWidget {
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -43,13 +43,13 @@ class StatCard extends StatelessWidget {
               Row(
                 children: [
                   if (icon != null) ...[
-                    Icon(icon, size: 18, color: cs.primary),
-                    const SizedBox(width: 8),
+                    Icon(icon, size: 16, color: cs.primary),
+                    const SizedBox(width: 6),
                   ],
                   Expanded(
                     child: Text(
                       title,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                       overflow: TextOverflow.ellipsis,
@@ -58,13 +58,13 @@ class StatCard extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: Text(
                   value,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                   maxLines: 1,
@@ -72,7 +72,7 @@ class StatCard extends StatelessWidget {
                 ),
               ),
               if (subtitle != null) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
                   subtitle!,
                   style: Theme.of(context).textTheme.bodySmall,

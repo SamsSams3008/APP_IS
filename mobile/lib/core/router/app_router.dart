@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../../features/ask_ai/ask_ai_screen.dart';
 import '../../features/credentials/presentation/screens/credentials_screen.dart';
 import '../../features/dashboard/presentation/screens/dashboard_screen.dart';
 import '../../features/dashboard/presentation/screens/metric_detail_screen.dart';
@@ -28,6 +29,10 @@ class AppRouter {
             final metricId = state.pathParameters['metricId'] ?? 'revenue';
             return MetricDetailScreen(metricId: metricId);
           },
+        ),
+        GoRoute(
+          path: '/dashboard/ask-ai',
+          builder: (context, state) => AskAiScreen(dataSummary: state.extra as String?),
         ),
       ],
     );

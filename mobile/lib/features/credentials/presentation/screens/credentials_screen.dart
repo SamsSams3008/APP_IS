@@ -82,13 +82,25 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
           _errorMessage = AppStrings.t('invalid_keys_config', LocaleNotifier.current);
           _loading = false;
         });
+        if (context.mounted && Navigator.of(context).canPop()) {
+          context.go('/credentials');
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(AppStrings.t('invalid_keys_config', LocaleNotifier.current))),
+            );
+          }
+        }
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(AppStrings.t('keys_saved', LocaleNotifier.current))),
       );
       CredentialsUpdatedNotifier.notify();
-      context.go('/dashboard');
+      if (context.mounted && Navigator.of(context).canPop()) {
+        context.pop();
+      } else {
+        context.go('/dashboard');
+      }
     } catch (e) {
       setState(() {
         _errorMessage = _isKeysError(e.toString())
@@ -96,23 +108,6 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
             : e.toString();
         _loading = false;
       });
-    }
-  }
-
-  Future<void> _goToDashboard() async {
-    final hasCredentials = await _repo.hasCredentials();
-    if (!hasCredentials || !mounted) return;
-    setState(() {
-      _errorMessage = null;
-      _loading = true;
-    });
-    final valid = await DashboardRepository().validateCredentials();
-    if (!mounted) return;
-    setState(() => _loading = false);
-    if (valid) {
-      context.go('/dashboard');
-    } else {
-      setState(() => _errorMessage = AppStrings.t('invalid_keys_config', LocaleNotifier.current));
     }
   }
 
@@ -134,6 +129,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
       valueListenable: LocaleNotifier.valueNotifier,
       builder: (context, locale, _) => Scaffold(
         appBar: AppBar(
+          automaticallyImplyLeading: Navigator.of(context).canPop(),
           flexibleSpace: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -159,19 +155,19 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
+                    gradient: const LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [
-                        Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
-                        Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.08),
-                      ],
+                      colors: [Color(0xFF0D47A1), Color(0xFF1565C0)],
                     ),
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Text(
                     AppStrings.t('config_instructions', locale),
-                    style: Theme.of(context).textTheme.bodyMedium,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFFBBDEFB),
+                      height: 1.4,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -231,11 +227,6 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : Text(AppStrings.t('save_continue', locale)),
-                ),
-                const SizedBox(height: 16),
-                OutlinedButton(
-                  onPressed: _loading ? null : _goToDashboard,
-                  child: Text(AppStrings.t('go_dashboard', locale)),
                 ),
                 const SizedBox(height: 32),
                 _buildLanguageSection(locale),

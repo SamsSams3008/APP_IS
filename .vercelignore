@@ -1,0 +1,6 @@
+# Solo subir api/ para el backend Ask AI; el resto supera el límite de 100 MB
+mobile
+.git
+.vercel
+*.md
+.DS_Store
