@@ -17,7 +17,11 @@ dependencies:
 
   # Network & storage
   http: ^1.2.0
+  url_launcher: ^6.3.0
+  webview_flutter: ^4.10.0
   shared_preferences: ^2.3.3
+  crypto: ^3.0.3
+  flutter_web_auth_2: ^3.1.0
 
   # UI & charts
   fl_chart: ^1.1.1

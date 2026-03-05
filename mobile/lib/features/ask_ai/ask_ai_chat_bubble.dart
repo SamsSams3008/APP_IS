@@ -166,14 +166,17 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final h = MediaQuery.of(context).size.height;
-    return Container(
-      height: h * 0.7,
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
+    final viewInsets = MediaQuery.of(context).viewInsets;
+    return Padding(
+      padding: EdgeInsets.only(bottom: viewInsets.bottom),
+      child: Container(
+        height: h * 0.7,
+        decoration: BoxDecoration(
+          color: cs.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
@@ -305,6 +308,7 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
           ),
         ],
       ),
+    ),
     );
   }
 }

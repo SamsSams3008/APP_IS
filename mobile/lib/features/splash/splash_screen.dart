@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/error_utils.dart';
 import '../../../data/credentials/credentials_repository.dart';
 import '../dashboard/data/dashboard_repository.dart';
 
@@ -25,13 +26,22 @@ class _SplashScreenState extends State<SplashScreen> {
       context.go('/credentials');
       return;
     }
-    final valid = await DashboardRepository().validateCredentials();
+    final (valid, error) = await DashboardRepository().validateCredentialsWithError();
     if (!mounted) return;
     if (valid) {
       context.go('/dashboard');
-    } else {
-      context.go('/credentials');
+      return;
     }
+    // Si es error de red: ir al dashboard para que muestre "sin internet" y pueda reintentar
+    if (ErrorUtils.isNetworkError(error ?? '')) {
+      context.go('/dashboard');
+      return;
+    }
+    if (ErrorUtils.isKeysError(error)) {
+      context.go('/credentials');
+      return;
+    }
+    context.go('/dashboard'); // otros errores: intentar en dashboard
   }
 
   static const Color _splashBg = Color(0xFF000000);

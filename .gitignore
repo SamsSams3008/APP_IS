@@ -11,3 +11,6 @@ node_modules/
 # Mac
 .DS_Store
 .vercel
+
+# Credenciales AdMob (copia desde admob_oauth_credentials.example.dart)
+mobile/lib/core/config/admob_oauth_credentials.dart

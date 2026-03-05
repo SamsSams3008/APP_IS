@@ -42,6 +42,8 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   List<IronSourceStatsRow> _filterMetadataRows = [];
   bool _loading = true;
   String? _error;
+  /// Solo una red configurada y no AppLovin: mostrar filtros y cargar apps ('ironSource' | 'admob').
+  String? _singleNetworkId;
 
   List<IronSourceStatsRow> _cachedRawRows = [];
   String? _cachedStartDate;
@@ -102,6 +104,26 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       _error = null;
     });
     try {
+      final providers = await _repo.getConfiguredProviders();
+      final hasAny = providers.hasIronSource || providers.hasAppLovin || providers.hasAdMob;
+      if (!hasAny && mounted) {
+        setState(() {
+          _loading = false;
+          _error = AppStrings.t('no_network_configured', LocaleNotifier.current);
+        });
+        return;
+      }
+      final hasAppLovin = providers.hasAppLovin;
+      final hasAdMob = providers.hasAdMob;
+      if (mounted) {
+        final single = (providers.hasIronSource && !hasAppLovin && !hasAdMob)
+            ? 'ironSource'
+            : (hasAdMob && !providers.hasIronSource && !hasAppLovin)
+                ? 'admob'
+                : null;
+        setState(() => _singleNetworkId = single);
+      }
+      final singleId = _singleNetworkId;
       final dateFilters = DashboardFilters(
         startDate: _filters.startDate,
         endDate: _filters.endDate,
@@ -109,8 +131,14 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       );
       final full = await _repo.getStatsRaw(_filters);
       final metadataFuture = _repo.getFilterMetadata(dateFilters);
-      if (_apps.isEmpty) {
-        try { _apps = await _repo.getApplications(); } catch (_) {}
+      if (singleId != null && mounted) {
+        try {
+          _apps = await _repo.getApplications({singleId});
+        } catch (_) {
+          _apps = [];
+        }
+      } else if (mounted) {
+        _apps = [];
       }
       if (!mounted) return;
       _cachedRawRows = full;
@@ -126,7 +154,21 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
         if (mounted) _prevStats = prev;
       } catch (_) {}
       if (!mounted) return;
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        var f = _filters;
+        if (_singleNetworkId == null) {
+          f = f.copyWith(clearAppKeys: true, clearCountries: true, clearPlatforms: true, clearAdUnits: true);
+        } else {
+          if (_countryOptions.isEmpty && f.hasCountryFilter) {
+            f = f.copyWith(clearCountries: true);
+          }
+          if (_apps.isEmpty && f.hasAppFilter) {
+            f = f.copyWith(clearAppKeys: true);
+          }
+        }
+        if (f != _filters) _filters = f;
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -527,10 +569,15 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                _buildDateChips(),
-                                const SizedBox(height: 16),
-                                _buildFiltersCard(),
-                                const SizedBox(height: 20),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 12),
+                                  child: _buildDateChips(),
+                                ),
+                                if (_singleNetworkId != null) ...[
+                                  const SizedBox(height: 16),
+                                  _buildFiltersCard(),
+                                  const SizedBox(height: 20),
+                                ],
                                 _buildMetricHeroCard(),
                                 const SizedBox(height: 20),
                                 _buildChart(),
@@ -719,6 +766,25 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       valueLabel = '${selected.length} ${AppStrings.t('apps_count', lm)}';
     }
     return _buildFilterChip(label: AppStrings.t('app_filter', lm), valueLabel: valueLabel, compact: compact, onTap: () async {
+      if (apps.isEmpty) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(AppStrings.t('app_filter', lm)),
+            content: Text(_singleNetworkId == 'admob'
+                ? AppStrings.t('no_apps_configured_admob', lm)
+                : AppStrings.t('no_apps_detected', lm)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
       final options = apps.map((a) => '${a.appKey}|${a.platform ?? ''}').toList();
       final labels = apps.map((a) => '${a.appName ?? a.appKey} (${a.platform ?? ''})').toList();
       final allSelectedForDialog = selected.isEmpty || (optsCount > 0 && apps.every((a) => selectedSet.contains(a.appKey)));
@@ -774,15 +840,14 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     });
   }
 
-  /// Lista unificada: countryCodesForFilter + países que aparecen en los datos.
-  /// Con breakdowns: 'date' las filas no tienen country; usamos _filterMetadataRows.
+  /// Solo países que aparecen en los datos de la(s) red(es) seleccionada(s).
   List<String> get _countryOptions {
-    final base = countryCodesForFilter.toSet();
+    final set = <String>{};
     for (final row in _filterMetadataRows) {
       final c = (row.country ?? '').trim().toUpperCase();
-      if (c.isNotEmpty) base.add(c);
+      if (c.isNotEmpty) set.add(c);
     }
-    return base.toList()..sort();
+    return set.toList()..sort();
   }
 
   Widget _countryDropdown([bool compact = false]) {
@@ -793,6 +858,23 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     final l = LocaleNotifier.current;
     final label = selected.isEmpty || allSelected ? AppStrings.t('all', l) : (selected.length == 1 ? formatCountry(selected.single, l) : '${selected.length} ${AppStrings.t('countries_count', l)}');
     return _buildFilterChip(label: AppStrings.t('filter_country', l), valueLabel: label, compact: compact, onTap: () async {
+      if (options.isEmpty) {
+        if (!mounted) return;
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(AppStrings.t('filter_country', l)),
+            content: Text(AppStrings.t('no_country_filter_available', l)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
       final allSelectedForDialog = selected.isEmpty || allSelected;
       final chosen = await _showMultiSelect(title: AppStrings.t('filter_country', l), options: options, labels: options.map((c) => formatCountry(c, l)).toList(), selected: allSelectedForDialog ? options.toSet() : selected.toSet());
       if (chosen != null && mounted) {

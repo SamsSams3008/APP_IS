@@ -1,12 +1,43 @@
+import '../domain/available_metrics.dart';
 import '../domain/dashboard_filters.dart';
 import '../domain/dashboard_stats.dart';
+import '../../../data/admob/admob_api_client.dart';
+import '../../../data/applovin/applovin_api_client.dart';
+import '../../../data/credentials/credentials_repository.dart';
 import '../../../data/ironsource/ironsource_api_client.dart';
 
-class DashboardRepository {
-  DashboardRepository({IronSourceApiClient? apiClient})
-      : _api = apiClient ?? IronSourceApiClient();
+/// Qué proveedores tienen credenciales configuradas.
+class ConfiguredProviders {
+  const ConfiguredProviders({
+    required this.hasIronSource,
+    required this.hasAppLovin,
+    this.hasAdMob = false,
+  });
+  final bool hasIronSource;
+  final bool hasAppLovin;
+  final bool hasAdMob;
+  List<String> get metricIds => AvailableMetrics.forProviders(
+        hasIronSource: hasIronSource,
+        hasAppLovin: hasAppLovin,
+        hasAdMob: hasAdMob,
+      );
+}
 
-  final IronSourceApiClient _api;
+class DashboardRepository {
+  DashboardRepository({
+    IronSourceApiClient? ironSourceApi,
+    AppLovinApiClient? appLovinApi,
+    AdMobApiClient? admobApi,
+    CredentialsRepository? credentialsRepo,
+  })  : _ironSource = ironSourceApi ?? IronSourceApiClient(),
+        _appLovin = appLovinApi ?? AppLovinApiClient(),
+        _admob = admobApi ?? AdMobApiClient(),
+        _credentials = credentialsRepo ?? CredentialsRepository();
+
+  final IronSourceApiClient _ironSource;
+  final AppLovinApiClient _appLovin;
+  final AdMobApiClient _admob;
+  final CredentialsRepository _credentials;
 
   static double _n(Map<String, dynamic> d, String k) =>
       (d[k] is num) ? (d[k] as num).toDouble() : 0;
@@ -53,7 +84,10 @@ class DashboardRepository {
   }
 
   /// Stats del periodo anterior (misma duración, días previos) para comparar %.
-  Future<DashboardStats?> getPreviousPeriodStats(DashboardFilters filters) async {
+  Future<DashboardStats?> getPreviousPeriodStats(
+    DashboardFilters filters, {
+    Set<String>? selectedNetworks,
+  }) async {
     final days = filters.endDate.difference(filters.startDate).inDays + 1;
     final prevEnd = filters.startDate.subtract(const Duration(days: 1));
     final prevStart = prevEnd.subtract(Duration(days: days - 1));
@@ -67,44 +101,141 @@ class DashboardRepository {
       countries: filters.countries,
     );
     try {
-      final rows = await getStatsRaw(prevFilters);
+      final rows = await getStatsRaw(prevFilters, selectedNetworks: selectedNetworks);
       return statsFromRows(rows);
     } catch (_) {
       return null;
     }
   }
 
-  /// Obtiene stats. Con breakdowns: 'date' + filtros vía API los totales coinciden con IronSource.
-  Future<List<IronSourceStatsRow>> getStatsRaw(DashboardFilters filters) async {
-    final appKey = _join(filters.appKeys);
-    final country = _join(filters.countries);
-    final adUnits = _mapAdFormatForApi(_join(filters.adUnits));
-    final platform = _platformParam(filters.platforms);
-    return _api.getStats(
-      startDate: filters.startDateStr,
-      endDate: filters.endDateStr,
-      appKey: appKey,
-      country: country,
-      adUnits: adUnits,
-      platform: platform,
-      breakdowns: 'date',
-      metrics: null,
+  Future<ConfiguredProviders> getConfiguredProviders() async {
+    final ironsource = await _credentials.getCredentials();
+    final applovin = await _credentials.getAppLovinReportKey();
+    final hasAdMob = await _credentials.hasAdMobCredentials();
+    return ConfiguredProviders(
+      hasIronSource: ironsource != null &&
+          ironsource.secretKey.trim().isNotEmpty &&
+          ironsource.refreshToken.trim().isNotEmpty,
+      hasAppLovin: applovin != null && applovin.trim().isNotEmpty,
+      hasAdMob: hasAdMob,
     );
   }
 
-  /// Llamada con breakdowns completos solo para obtener dimensiones (países, etc).
-  /// No usar para stats (hay drift por redondeo). Solo para opciones de filtros.
-  Future<List<IronSourceStatsRow>> getFilterMetadata(DashboardFilters filters) async {
-    return _api.getStats(
-      startDate: filters.startDateStr,
-      endDate: filters.endDateStr,
-      appKey: null,
-      country: null,
-      adUnits: null,
-      platform: null,
-      breakdowns: 'date,adFormat,platform,country,app',
-      metrics: 'revenue,impressions',
-    );
+  /// Obtiene stats desde las redes seleccionadas. [selectedNetworks]: 'ironSource', 'applovin'.
+  Future<List<IronSourceStatsRow>> getStatsRaw(
+    DashboardFilters filters, {
+    Set<String>? selectedNetworks,
+  }) async {
+    final providers = await getConfiguredProviders();
+    final sel = selectedNetworks ?? {
+      if (providers.hasIronSource) 'ironSource',
+      if (providers.hasAppLovin) 'applovin',
+      if (providers.hasAdMob) 'admob',
+    };
+    if (sel.isEmpty) {
+      throw Exception('Selecciona al menos una red o configura credenciales en Ajustes.');
+    }
+
+    final allRows = <IronSourceStatsRow>[];
+
+    if (sel.contains('ironSource') && providers.hasIronSource) {
+      final appKey = _join(filters.appKeys);
+      final country = _join(filters.countries);
+      final adUnits = _mapAdFormatForApi(_join(filters.adUnits));
+      final platform = _platformParam(filters.platforms);
+      final rows = await _ironSource.getStats(
+        startDate: filters.startDateStr,
+        endDate: filters.endDateStr,
+        appKey: appKey,
+        country: country,
+        adUnits: adUnits,
+        platform: platform,
+        breakdowns: 'date',
+        metrics: null,
+      );
+      allRows.addAll(rows);
+    }
+
+    if (sel.contains('applovin') && providers.hasAppLovin) {
+      final country = _join(filters.countries);
+      final platform = _platformParam(filters.platforms);
+      final adFormat = _join(filters.adUnits);
+      try {
+        final rows = await _appLovin.getStats(
+          startDate: filters.startDateStr,
+          endDate: filters.endDateStr,
+          country: country,
+          platform: platform,
+          adFormat: adFormat,
+        );
+        allRows.addAll(rows);
+      } catch (e) {
+        final err = e.toString().toLowerCase();
+        if (err.contains('45') || err.contains('window')) {
+          throw Exception('AppLovin permite máximo 45 días. Usa un rango más corto.');
+        }
+        rethrow;
+      }
+    }
+
+    if (sel.contains('admob') && providers.hasAdMob) {
+      try {
+        final rows = await _admob.getStats(
+          startDate: filters.startDateStr,
+          endDate: filters.endDateStr,
+          country: _join(filters.countries),
+          platform: _platformParam(filters.platforms),
+          adFormat: _join(filters.adUnits),
+          appIds: filters.appKeys?.isNotEmpty == true ? filters.appKeys : null,
+        );
+        allRows.addAll(rows);
+      } catch (_) {}
+    }
+
+    return allRows;
+  }
+
+  /// Llamada con breakdowns completos solo para obtener dimensiones.
+  Future<List<IronSourceStatsRow>> getFilterMetadata(
+    DashboardFilters filters, {
+    Set<String>? selectedNetworks,
+  }) async {
+    final providers = await getConfiguredProviders();
+    final sel = selectedNetworks ?? {
+      if (providers.hasIronSource) 'ironSource',
+      if (providers.hasAppLovin) 'applovin',
+      if (providers.hasAdMob) 'admob',
+    };
+    final allRows = <IronSourceStatsRow>[];
+
+    if (sel.contains('ironSource') && providers.hasIronSource) {
+      final meta = await _ironSource.getStats(
+        startDate: filters.startDateStr,
+        endDate: filters.endDateStr,
+        appKey: null,
+        country: null,
+        adUnits: null,
+        platform: null,
+        breakdowns: 'date,adFormat,platform,country,app',
+        metrics: 'revenue,impressions',
+      );
+      allRows.addAll(meta);
+    }
+
+    if (sel.contains('applovin') && providers.hasAppLovin) {
+      try {
+        final meta = await _appLovin.getStats(
+          startDate: filters.startDateStr,
+          endDate: filters.endDateStr,
+          country: null,
+          platform: null,
+          adFormat: null,
+        );
+        allRows.addAll(meta);
+      } catch (_) {}
+    }
+
+    return allRows;
   }
 
   static String? _mapAdFormatForApi(String? adFormatCsv) {
@@ -131,17 +262,90 @@ class DashboardRepository {
     return platforms.single.toLowerCase();
   }
 
-  Future<List<IronSourceApp>> getApplications() async {
-    return _api.getApplications();
+  /// Apps para el filtro: según la red seleccionada (solo cuando hay una sola).
+  Future<List<IronSourceApp>> getApplications(Set<String> selectedNetworks) async {
+    if (selectedNetworks.length != 1) return [];
+    final only = selectedNetworks.single;
+    if (only == 'ironSource') {
+      final providers = await getConfiguredProviders();
+      if (providers.hasIronSource) return _ironSource.getApplications();
+      return [];
+    }
+    if (only == 'admob') {
+      final providers = await getConfiguredProviders();
+      if (providers.hasAdMob) return _admob.getApps();
+      return [];
+    }
+    return [];
   }
 
-  /// Valida que las credenciales guardadas funcionen (puede hacer una llamada ligera).
-  Future<bool> validateCredentials() async {
+  /// Valida IronSource (usa credenciales guardadas).
+  Future<bool> validateIronSource() async {
     try {
-      await _api.getApplications();
+      await _ironSource.getApplications();
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  /// Valida AppLovin (usa Report Key guardado).
+  Future<bool> validateAppLovin() async {
+    try {
+      return await _appLovin.validateReportKey();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Valida AdMob (usa Publisher ID + OAuth refresh token).
+  Future<bool> validateAdMob() async {
+    try {
+      return await _admob.validateCredentials();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Valida que al menos un proveedor configurado funcione.
+  Future<(bool valid, String? error)> validateCredentialsWithError() async {
+    final providers = await getConfiguredProviders();
+    if (!providers.hasIronSource && !providers.hasAppLovin && !providers.hasAdMob) {
+      return (false, 'Configura IronSource, AppLovin o AdMob en Ajustes.');
+    }
+    String? lastError;
+    if (providers.hasIronSource) {
+      try {
+        await _ironSource.getApplications();
+        return (true, null);
+      } catch (e) {
+        lastError = e.toString();
+      }
+    }
+    if (providers.hasAppLovin) {
+      try {
+        final ok = await _appLovin.validateReportKey();
+        if (ok) return (true, null);
+        lastError = lastError ?? 'AppLovin Report Key inválido.';
+      } catch (e) {
+        lastError = lastError ?? e.toString();
+      }
+    }
+    if (providers.hasAdMob) {
+      try {
+        final ok = await _admob.validateCredentials();
+        if (ok) return (true, null);
+        lastError = lastError ?? 'AdMob Publisher ID o credenciales OAuth inválidas.';
+      } catch (e) {
+        lastError = lastError ?? e.toString();
+      }
+    }
+    return (false, lastError ?? 'Credenciales inválidas.');
+  }
+
+  /// Valida credenciales. Retorna true si ok, false si falla (sin distinguir motivo).
+  Future<bool> validateCredentials() async {
+    final (valid, _) = await validateCredentialsWithError();
+    return valid;
   }
 }

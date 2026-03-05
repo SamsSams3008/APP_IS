@@ -17,7 +17,10 @@ class AppRouter {
         ),
         GoRoute(
           path: '/credentials',
-          builder: (context, state) => const CredentialsScreen(),
+          builder: (context, state) {
+            final section = state.uri.queryParameters['section'];
+            return CredentialsScreen(initialSection: section);
+          },
         ),
         GoRoute(
           path: '/dashboard',

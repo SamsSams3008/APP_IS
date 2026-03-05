@@ -2,7 +2,10 @@
 class AppConstants {
   AppConstants._();
 
-  static const String appName = 'Ad Revenue Dashboard - For ironSource';
+  static const String appName = 'Ad Revenue Dashboard';
+
+  /// AppLovin MAX Revenue Reporting API (Report Key)
+  static const String appLovinReportUrl = 'https://r.applovin.com/maxReport';
 
   /// Bearer API: obtener token con Secret Key + Refresh Token (Mi cuenta → My Account)
   static const String ironsourceAuthUrl =
@@ -21,6 +24,14 @@ class AppConstants {
   /// Secure storage keys (solo en dispositivo)
   static const String storageSecretKey = 'ironsource_secret_key';
   static const String storageRefreshToken = 'ironsource_refresh_token';
+  static const String storageAppLovinReportKey = 'applovin_report_key';
+  static const String storageAdMobPublisherId = 'admob_publisher_id';
+  static const String storageAdMobRefreshToken = 'admob_refresh_token';
+  static const String storageAdMobClientId = 'admob_oauth_client_id';
+  static const String storageAdMobClientSecret = 'admob_oauth_client_secret';
+
+  /// OAuth redirect para AdMob. Registrar en Google Cloud Console (URIs de redirección).
+  static const String admobOAuthRedirectUri = 'http://localhost:8765/oauth2callback';
   static const String storageThemeMode = 'app_theme_mode';
   static const String storageLocale = 'app_locale';
   static const String storageDashboardFilters = 'dashboard_filters';

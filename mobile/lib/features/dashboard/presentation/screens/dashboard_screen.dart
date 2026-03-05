@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/error_utils.dart';
 import '../../../../features/ask_ai/ask_ai_chat_bubble.dart';
 import '../widgets/metric_detail_content.dart';
 import '../../../../core/credentials_updated_notifier.dart';
@@ -14,6 +15,7 @@ import '../../../../shared/widgets/multi_select_dialog.dart';
 import '../../../../shared/widgets/error_retry_body.dart';
 import '../../../../shared/widgets/wave_loading_indicator.dart';
 import '../../data/dashboard_repository.dart';
+import '../../domain/available_metrics.dart';
 import '../../domain/dashboard_filters.dart';
 import '../../domain/dashboard_stats.dart';
 
@@ -43,6 +45,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _loading = true;
   String? _error;
   bool _filtersExpanded = false;
+  bool _totalsByDayExpanded = true;
+  bool _byCountryExpanded = false;
+  bool _byAppExpanded = false;
+  bool _byAdExpanded = false;
+  bool _byPlatformExpanded = false;
   int _currentTabIndex = 0;
   int _detailsMetricIndex = 0;
   late final PageController _mainPageController = PageController();
@@ -82,11 +89,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  static const List<String> _metricIds = [
-    'revenue', 'impressions', 'ecpm', 'clicks', 'completions',
-    'fill_rate', 'completion_rate', 'revenue_per_completion',
-    'ctr', 'app_requests', 'dau', 'sessions',
-  ];
+  /// Métricas visibles según redes seleccionadas (intersección)
+  List<String> _metricIds = AvailableMetrics.baseMetricIds;
+
+  /// Redes con credenciales; AdMob sin implementar = false
+  bool _hasIronSource = false;
+  bool _hasAppLovin = false;
+  bool _hasAdMob = false;
+
+  /// Redes seleccionadas ('ironSource', 'applovin', 'admob')
+  Set<String> _selectedNetworks = {};
 
   void _onCredentialsUpdated() {
     if (!mounted) return;
@@ -110,13 +122,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
       context.go('/credentials');
       return;
     }
-    final valid = await DashboardRepository().validateCredentials();
+    final (valid, error) = await DashboardRepository().validateCredentialsWithError();
     if (!mounted) return;
-    if (!valid) {
+    if (valid) {
+      _load();
+      return;
+    }
+    // Error: si es de red, NO sacar a credentials; ir a load para mostrar retry
+    if (ErrorUtils.isNetworkError(error ?? '')) {
+      _load(); // fallará y mostrará "sin internet" con botón reintentar
+      return;
+    }
+    if (ErrorUtils.isKeysError(error)) {
       context.go('/credentials');
       return;
     }
-    _load();
+    _load(); // otros errores: intentar load, mostrará el error
   }
 
   /// Cache válido si fechas y filtros coinciden (los filtros se envían a la API).
@@ -141,7 +162,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _loadPrevStats() async {
     try {
-      final prev = await _repo.getPreviousPeriodStats(_filters);
+      final sel = _selectedNetworks.isEmpty ? null : _selectedNetworks;
+      final prev = await _repo.getPreviousPeriodStats(_filters, selectedNetworks: sel);
       if (mounted) {
         setState(() {
           _prevStats = prev;
@@ -173,19 +195,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _error = null;
     });
     try {
+      final providers = await _repo.getConfiguredProviders();
+      final configured = <String>{
+        if (providers.hasIronSource) 'ironSource',
+        if (providers.hasAppLovin) 'applovin',
+        if (providers.hasAdMob) 'admob',
+      };
+      if (configured.isEmpty && mounted) {
+        setState(() {
+          _loading = false;
+          _error = AppStrings.t('no_network_configured', LocaleNotifier.current);
+          _hasIronSource = false;
+          _hasAppLovin = false;
+          _hasAdMob = false;
+          _selectedNetworks = {};
+          _metricIds = AvailableMetrics.baseMetricIds;
+        });
+        return;
+      }
+      final sel = _selectedNetworks.isEmpty
+          ? null
+          : _selectedNetworks;
       final dateFilters = DashboardFilters(
         startDate: _filters.startDate,
         endDate: _filters.endDate,
         datePreset: _filters.datePreset,
       );
-      final full = await _repo.getStatsRaw(_filters);
-      final tableFuture = _repo.getStatsRaw(dateFilters); // Solo fecha para tablas
-      final metadataFuture = _repo.getFilterMetadata(dateFilters);
-      if (_apps.isEmpty) {
-        try {
-          _apps = await _repo.getApplications();
-        } catch (_) {}
-      }
+      final full = await _repo.getStatsRaw(_filters, selectedNetworks: sel);
+      final tableFuture = _repo.getStatsRaw(dateFilters, selectedNetworks: sel);
+      final metadataFuture = _repo.getFilterMetadata(dateFilters, selectedNetworks: sel);
       if (!mounted) return;
       _cachedRawRows = full;
       _cachedTableRawRows = await tableFuture;
@@ -193,51 +231,83 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _cachedStartDate = _filters.startDateStr;
       _cachedEndDate = _filters.endDateStr;
       _cachedFilterKey = _filterKey;
+      final hadNoData = _stats == null;
       _applyFiltersFromCache();
+      if (mounted) {
+        _hasIronSource = providers.hasIronSource;
+        _hasAppLovin = providers.hasAppLovin;
+        _hasAdMob = providers.hasAdMob;
+        final configured = <String>{
+          if (_hasIronSource) 'ironSource',
+          if (_hasAppLovin) 'applovin',
+          if (_hasAdMob) 'admob',
+        };
+        _selectedNetworks = _selectedNetworks.intersection(configured);
+        if (_selectedNetworks.isEmpty) _selectedNetworks = configured;
+        _metricIds = AvailableMetrics.forSelectedNetworks(_selectedNetworks);
+        if (_detailsMetricIndex >= _metricIds.length) _detailsMetricIndex = 0;
+        if (_selectedNetworks.length == 1) {
+          try {
+            _apps = await _repo.getApplications(_selectedNetworks);
+          } catch (_) {
+            _apps = [];
+          }
+        } else {
+          _apps = [];
+        }
+      }
       try {
         _filterMetadataRows = await metadataFuture;
       } catch (_) {}
       if (!mounted) return;
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _filtersExpanded = false;
+        if (hadNoData) {
+          _currentTabIndex = 0;
+          _detailsMetricIndex = 0;
+        }
+        var f = _filters;
+        if (_selectedNetworks.length >= 2) {
+          f = f.copyWith(clearAppKeys: true, clearCountries: true, clearPlatforms: true, clearAdUnits: true);
+        } else {
+          if (_countryFilterOptions.isEmpty && f.hasCountryFilter) {
+            f = f.copyWith(clearCountries: true);
+          }
+          if (_apps.isEmpty && f.hasAppFilter) {
+            f = f.copyWith(clearAppKeys: true);
+          }
+        }
+        if (f != _filters) _filters = f;
+      });
+      if (hadNoData) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _mainPageController.hasClients) {
+            _mainPageController.jumpToPage(0);
+          }
+        });
+      }
     } catch (e) {
       if (mounted) {
-        if (_isKeysError(e.toString())) {
+        final err = e.toString();
+        // Red primero: nunca sacar a credentials por falta de internet
+        if (ErrorUtils.isNetworkError(err)) {
+          setState(() {
+            _error = AppStrings.t('no_internet', LocaleNotifier.current);
+            _loading = false;
+          });
+          return;
+        }
+        if (ErrorUtils.isKeysError(err)) {
           context.go('/credentials');
           return;
         }
         setState(() {
-          _error = _isNetworkError(e.toString())
-              ? AppStrings.t('no_internet', LocaleNotifier.current)
-              : e.toString();
+          _error = err;
           _loading = false;
         });
       }
     }
-  }
-
-  static bool _isNetworkError(String error) {
-    final lower = error.toLowerCase();
-    return lower.contains('socketexception') ||
-        lower.contains('failed host lookup') ||
-        lower.contains('connection refused') ||
-        lower.contains('connection timed out') ||
-        lower.contains('network is unreachable') ||
-        lower.contains('no internet');
-  }
-
-  static bool _isKeysError(String? error) {
-    if (error == null || error.isEmpty) return false;
-    final lower = error.toLowerCase();
-    return lower.contains('secret') ||
-        lower.contains('refresh token') ||
-        lower.contains('bearer') ||
-        lower.contains('auth') ||
-        lower.contains('401') ||
-        lower.contains('403') ||
-        lower.contains('unauthorized') ||
-        lower.contains('invalid credentials') ||
-        lower.contains('configura secret') ||
-        lower.contains('token vacío');
   }
 
   Future<void> _pickDateRange() async {
@@ -339,43 +409,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentTabIndex,
-        onDestinationSelected: (i) {
-          setState(() => _currentTabIndex = i);
-          final page = i == 0 ? 0 : i == 1 ? 1 : 2 + _detailsMetricIndex;
-          _mainPageController.animateToPage(page, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
-        },
-        destinations: [
-          NavigationDestination(icon: const Icon(Icons.home_outlined), selectedIcon: const Icon(Icons.home), label: AppStrings.t('tab_home', locale)),
-          NavigationDestination(icon: const Icon(Icons.table_chart_outlined), selectedIcon: const Icon(Icons.table_chart), label: AppStrings.t('tab_table', locale)),
-          NavigationDestination(icon: const Icon(Icons.bar_chart_outlined), selectedIcon: const Icon(Icons.bar_chart), label: AppStrings.t('tab_details', locale)),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: _buildNetworkSelector(locale),
+          ),
+          NavigationBar(
+            selectedIndex: _currentTabIndex,
+            onDestinationSelected: (i) {
+              setState(() => _currentTabIndex = i);
+              final page = i == 0 ? 0 : i == 1 ? 1 : 2 + _detailsMetricIndex;
+              _mainPageController.animateToPage(page, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+            },
+            destinations: [
+              NavigationDestination(icon: const Icon(Icons.home_outlined), selectedIcon: const Icon(Icons.home), label: AppStrings.t('tab_home', locale)),
+              NavigationDestination(icon: const Icon(Icons.table_chart_outlined), selectedIcon: const Icon(Icons.table_chart), label: AppStrings.t('tab_table', locale)),
+              NavigationDestination(icon: const Icon(Icons.bar_chart_outlined), selectedIcon: const Icon(Icons.bar_chart), label: AppStrings.t('tab_details', locale)),
+            ],
+          ),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () {
-          _cachedRawRows = [];
-          _cachedStartDate = null;
-          _cachedEndDate = null;
-          return _load();
-        },
-        child: _loading && _stats == null
+              onRefresh: () {
+                _cachedRawRows = [];
+                _cachedStartDate = null;
+                _cachedEndDate = null;
+                return _load();
+              },
+              child: _loading && _stats == null
             ? const Center(child: CircularProgressIndicator())
             : _error != null && _stats == null
                 ? ErrorRetryBody(
-                    message: _DashboardScreenState._isKeysError(_error)
+                    message: ErrorUtils.isKeysError(_error)
                         ? AppStrings.t('invalid_keys', locale)
                         : _error!,
-                    isNetworkError: _DashboardScreenState._isNetworkError(_error ?? ''),
+                    isNetworkError: ErrorUtils.isNetworkError(_error ?? ''),
                     onRetry: _load,
                   )
                 : Stack(
                     children: [
-                      PageView(
+                      PageView.builder(
                         controller: _mainPageController,
                         physics: const BouncingScrollPhysics(),
                         onPageChanged: (i) {
                           setState(() {
+                            _filtersExpanded = false;
                             if (i == 0) {
                               _currentTabIndex = 0;
                             } else if (i == 1) {
@@ -386,11 +466,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             }
                           });
                         },
-                        children: [
-                          _buildHomeTab(locale),
-                          _buildTableTab(locale),
-                          ...List.generate(_metricIds.length, (j) => _buildDetailPageWithFilters(_metricIds[j], locale)),
-                        ],
+                        itemCount: 2 + _metricIds.length,
+                        itemBuilder: (context, index) {
+                          if (index == 0) return RepaintBoundary(child: _buildHomeTab(locale));
+                          if (index == 1) return RepaintBoundary(child: _buildTableTab(locale));
+                          return RepaintBoundary(child: _buildDetailPageWithFilters(_metricIds[index - 2], locale));
+                        },
                       ),
                       if (_loading && _stats != null)
                         Positioned(
@@ -422,7 +503,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final padding = width > 900 ? 24.0 : (width > 600 ? 20.0 : 12.0);
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(padding, 8, padding, 24),
+      padding: EdgeInsets.fromLTRB(padding, 20, padding, 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -430,8 +511,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildDateFilters(),
           SizedBox(height: padding),
           if (_stats != null) ...[
-            _buildFiltersSection(),
-            SizedBox(height: padding),
+            if (_selectedNetworks.length == 1 && !_selectedNetworks.contains('applovin')) ...[
+              _buildFiltersSection(),
+              SizedBox(height: padding),
+            ],
             _buildMainHeroCard(locale),
             SizedBox(height: padding),
             ..._buildSecondaryCardsList(locale),
@@ -444,20 +527,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Widget> _buildSecondaryCardsList(String locale) {
     final s = _stats!;
     final l = LocaleNotifier.current;
-    final items = <Widget>[
-      _buildSecondaryCardRow(AppStrings.t('revenue', l), formatMoney(s.revenue), Icons.monetization_on_outlined, 'revenue', 0),
-      _buildSecondaryCardRow(AppStrings.t('impressions', l), formatNumber(s.impressions), Icons.visibility, 'impressions', 0),
-      _buildSecondaryCardRow(AppStrings.t('ecpm', l), formatMoney(s.ecpm), Icons.trending_up, 'ecpm', 0),
-    ];
-    if (s.clicks != null) items.add(_buildSecondaryCardRow(AppStrings.t('clicks', l), formatNumber(s.clicks!), Icons.touch_app, 'clicks', 0));
-    if (s.completions != null) items.add(_buildSecondaryCardRow(AppStrings.t('completions', l), formatNumber(s.completions!), Icons.check_circle, 'completions', 0));
-    if (s.fillRate != null && s.fillRate! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('fill_rate', l), '${formatDecimal(s.fillRate!)}%', Icons.pie_chart_outline, 'fill_rate', 0));
-    if (s.completionRate != null && s.completionRate! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('completion_rate', l), '${formatDecimal(s.completionRate!)}%', Icons.done_all, 'completion_rate', 0));
-    if (s.revenuePerCompletion != null && s.revenuePerCompletion! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('revenue_per_completion', l), formatMoney(s.revenuePerCompletion!), Icons.monetization_on_outlined, 'revenue_per_completion', 0));
-    if (s.ctr != null && s.ctr! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('ctr', l), '${formatDecimal(s.ctr!)}%', Icons.ads_click, 'ctr', 0));
-    if (s.appRequests != null && s.appRequests! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('app_requests', l), formatNumber(s.appRequests!), Icons.sync, 'app_requests', 0));
-    if (s.dau != null && s.dau! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('dau', l), formatNumber(s.dau!), Icons.people, 'dau', 0));
-    if (s.sessions != null && s.sessions! > 0) items.add(_buildSecondaryCardRow(AppStrings.t('sessions', l), formatNumber(s.sessions!), Icons.event_note, 'sessions', 0));
+    final items = <Widget>[];
+    if (_metricIds.contains('revenue')) items.add(_buildSecondaryCardRow(AppStrings.t('revenue', l), formatMoney(s.revenue), Icons.monetization_on_outlined, 'revenue', 0));
+    if (_metricIds.contains('impressions')) items.add(_buildSecondaryCardRow(AppStrings.t('impressions', l), formatNumber(s.impressions), Icons.visibility, 'impressions', 0));
+    if (_metricIds.contains('ecpm')) items.add(_buildSecondaryCardRow(AppStrings.t('ecpm', l), formatMoney(s.ecpm), Icons.trending_up, 'ecpm', 0));
+    if (_metricIds.contains('clicks')) items.add(_buildSecondaryCardRow(AppStrings.t('clicks', l), formatNumber(s.clicks ?? 0), Icons.touch_app, 'clicks', 0));
+    if (_metricIds.contains('completions')) items.add(_buildSecondaryCardRow(AppStrings.t('completions', l), formatNumber(s.completions ?? 0), Icons.check_circle, 'completions', 0));
+    if (_metricIds.contains('fill_rate')) items.add(_buildSecondaryCardRow(AppStrings.t('fill_rate', l), s.fillRate != null ? '${formatDecimal(s.fillRate!)}%' : '-', Icons.pie_chart_outline, 'fill_rate', 0));
+    if (_metricIds.contains('completion_rate')) items.add(_buildSecondaryCardRow(AppStrings.t('completion_rate', l), s.completionRate != null ? '${formatDecimal(s.completionRate!)}%' : '-', Icons.done_all, 'completion_rate', 0));
+    if (_metricIds.contains('revenue_per_completion')) items.add(_buildSecondaryCardRow(AppStrings.t('revenue_per_completion', l), s.revenuePerCompletion != null ? formatMoney(s.revenuePerCompletion!) : '-', Icons.monetization_on_outlined, 'revenue_per_completion', 0));
+    if (_metricIds.contains('ctr')) items.add(_buildSecondaryCardRow(AppStrings.t('ctr', l), s.ctr != null ? '${formatDecimal(s.ctr!)}%' : '-', Icons.ads_click, 'ctr', 0));
+    if (_metricIds.contains('app_requests')) items.add(_buildSecondaryCardRow(AppStrings.t('app_requests', l), formatNumber(s.appRequests ?? 0), Icons.sync, 'app_requests', 0));
+    if (_metricIds.contains('dau')) items.add(_buildSecondaryCardRow(AppStrings.t('dau', l), formatNumber(s.dau ?? 0), Icons.people, 'dau', 0));
+    if (_metricIds.contains('sessions')) items.add(_buildSecondaryCardRow(AppStrings.t('sessions', l), formatNumber(s.sessions ?? 0), Icons.event_note, 'sessions', 0));
     return items;
   }
 
@@ -499,7 +581,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final padding = width > 900 ? 24.0 : (width > 600 ? 20.0 : 12.0);
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(padding, 8, padding, 24),
+      padding: EdgeInsets.fromLTRB(padding, 20, padding, 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -507,60 +589,128 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildDateFilters(),
           SizedBox(height: padding),
           if (_stats != null) ...[
-            _buildCollapsibleTableSections(padding),
+            _buildCollapsibleSection(
+              title: AppStrings.t('totals_by_day', LocaleNotifier.current),
+              expanded: _totalsByDayExpanded,
+              onToggle: () => setState(() => _totalsByDayExpanded = !_totalsByDayExpanded),
+              child: _buildTotalsByDayTable(width),
+            ),
+            if (_selectedNetworks.contains('ironSource') && !_selectedNetworks.contains('applovin')) ...[
+              SizedBox(height: padding),
+              ..._buildBreakdownTables(width, locale),
+            ],
           ],
         ],
       ),
     );
   }
 
-  bool _totalsByDayExpanded = true;
-  bool _byCountryExpanded = false;
-  bool _byAppExpanded = false;
-  bool _byAdExpanded = false;
-  bool _byPlatformExpanded = false;
+  static const double _networkChipHeight = 44;
 
-  Widget _buildCollapsibleTableSections(double padding) {
-    final width = MediaQuery.of(context).size.width;
+  Widget _buildNetworkSelector(String locale) {
     final l = LocaleNotifier.current;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        _buildCollapsibleSection(
-          title: AppStrings.t('totals_by_day', l),
-          expanded: _totalsByDayExpanded,
-          onToggle: () => setState(() => _totalsByDayExpanded = !_totalsByDayExpanded),
-          child: _buildDataTable(width, showHeader: false),
-        ),
-        SizedBox(height: padding),
-        _buildCollapsibleSection(
-          title: AppStrings.t('by_country', l),
-          expanded: _byCountryExpanded,
-          onToggle: () => setState(() => _byCountryExpanded = !_byCountryExpanded),
-          child: _buildCountriesSection(),
-        ),
-        SizedBox(height: padding),
-        _buildCollapsibleSection(
-          title: AppStrings.t('by_app', l),
-          expanded: _byAppExpanded,
-          onToggle: () => setState(() => _byAppExpanded = !_byAppExpanded),
-          child: _buildByAppSection(width),
-        ),
-        SizedBox(height: padding),
-        _buildCollapsibleSection(
-          title: AppStrings.t('by_ad', l),
-          expanded: _byAdExpanded,
-          onToggle: () => setState(() => _byAdExpanded = !_byAdExpanded),
-          child: _buildByAdSection(width),
-        ),
-        SizedBox(height: padding),
-        _buildCollapsibleSection(
-          title: AppStrings.t('by_platform', l),
-          expanded: _byPlatformExpanded,
-          onToggle: () => setState(() => _byPlatformExpanded = !_byPlatformExpanded),
-          child: _buildByPlatformSection(width),
+        Row(
+          children: [
+            Expanded(flex: 1, child: SizedBox(height: _networkChipHeight, child: Center(child: _buildNetworkChip('ironSource', AppStrings.t('ironsource_section', l), _hasIronSource)))),
+            const SizedBox(width: 6),
+            Expanded(flex: 1, child: SizedBox(height: _networkChipHeight, child: Center(child: _buildNetworkChip('applovin', AppStrings.t('applovin_section', l), _hasAppLovin)))),
+            const SizedBox(width: 6),
+            Expanded(flex: 1, child: SizedBox(height: _networkChipHeight, child: Center(child: _buildNetworkChip('admob', AppStrings.t('admob_label', l), _hasAdMob)))),
+          ],
         ),
       ],
     );
+  }
+
+  Widget _buildNetworkChip(String id, String label, bool hasKey) {
+    final selected = _selectedNetworks.contains(id);
+    final enabled = hasKey;
+    final cs = Theme.of(context).colorScheme;
+    final section = id == 'ironSource' ? 'ironsource' : id.toLowerCase();
+    final chip = FilterChip(
+      label: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.center,
+        child: Text(label, style: const TextStyle(fontSize: 12), maxLines: 1),
+      ),
+      selected: selected,
+      onSelected: enabled
+          ? (v) {
+              final next = v
+                  ? {..._selectedNetworks, id}
+                  : _selectedNetworks.where((x) => x != id).toSet();
+              if (next.isEmpty) return;
+              setState(() {
+                _selectedNetworks = next;
+                _metricIds = AvailableMetrics.forSelectedNetworks(_selectedNetworks);
+                if (_detailsMetricIndex >= _metricIds.length) _detailsMetricIndex = 0;
+                _cachedRawRows = [];
+                _cachedTableRawRows = [];
+                _tableRawRows = [];
+                _cachedStartDate = null;
+                _cachedEndDate = null;
+              });
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _load();
+              });
+            }
+          : null,
+      selectedColor: enabled ? cs.primaryContainer : null,
+      checkmarkColor: cs.primary,
+      showCheckmark: enabled,
+      backgroundColor: enabled ? null : cs.surfaceContainerHighest.withValues(alpha: 0.6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      side: BorderSide(color: cs.outline.withValues(alpha: 0.3)),
+    );
+    if (enabled) return chip;
+    return GestureDetector(
+      onTap: () => context.push('/credentials?section=$section'),
+      child: AbsorbPointer(child: chip),
+    );
+  }
+
+  Widget _buildTotalsByDayTable(double width) {
+    return _buildDataTable(width, showHeader: false);
+  }
+
+  List<Widget> _buildBreakdownTables(double width, String locale) {
+    final l = LocaleNotifier.current;
+    final padding = width > 900 ? 24.0 : (width > 600 ? 20.0 : 12.0);
+    return [
+      _buildCollapsibleSection(
+        title: AppStrings.t('by_country', l),
+        expanded: _byCountryExpanded,
+        onToggle: () => setState(() => _byCountryExpanded = !_byCountryExpanded),
+        child: _buildCountriesSection(width),
+      ),
+      SizedBox(height: padding),
+      _buildCollapsibleSection(
+        title: AppStrings.t('by_app', l),
+        expanded: _byAppExpanded,
+        onToggle: () => setState(() => _byAppExpanded = !_byAppExpanded),
+        child: _buildByAppSection(width),
+      ),
+      SizedBox(height: padding),
+      _buildCollapsibleSection(
+        title: AppStrings.t('by_ad', l),
+        expanded: _byAdExpanded,
+        onToggle: () => setState(() => _byAdExpanded = !_byAdExpanded),
+        child: _buildByAdSection(width),
+      ),
+      SizedBox(height: padding),
+      _buildCollapsibleSection(
+        title: AppStrings.t('by_platform', l),
+        expanded: _byPlatformExpanded,
+        onToggle: () => setState(() => _byPlatformExpanded = !_byPlatformExpanded),
+        child: _buildByPlatformSection(width),
+      ),
+    ];
   }
 
   Widget _buildCollapsibleSection({
@@ -623,6 +773,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return '$name ($platLabel)';
   }
 
+  Widget _buildCountriesSection(double width) {
+    final byCountry = _aggregateByCountry();
+    final l = LocaleNotifier.current;
+    if (byCountry.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(AppStrings.t('no_country_data', l), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        final colRev = w > 400 ? 90.0 : 70.0;
+        final colImp = w > 400 ? 100.0 : 88.0;
+        final colCountry = w - colRev - colImp - 16;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                AppStrings.t('country_table_discrepancy', l),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6)),
+              ),
+            ),
+            ...byCountry.take(12).map((r) {
+              final code = r['countryCode'] as String?;
+              final name = formatCountry(code, LocaleNotifier.current);
+              final rev = (r['revenue'] as num).toDouble();
+              final imp = r['impressions'] as int;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    SizedBox(width: colCountry, child: Text(name, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    SizedBox(width: colRev, child: Text(formatMoney(rev), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.primary), textAlign: TextAlign.end, overflow: TextOverflow.ellipsis)),
+                    SizedBox(width: colImp, child: Text(formatNumber(imp), style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.end, overflow: TextOverflow.ellipsis)),
+                  ],
+                ),
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildByAppSection(double width) {
     final byApp = _aggregateByApp();
     final l = LocaleNotifier.current;
@@ -632,11 +829,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: Text(AppStrings.t('no_data_table', l), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
       );
     }
-    return _buildGenericTable(
-      rows: byApp.take(12).toList(),
-      labelKey: 'appKey',
-      labelFormatter: (v) => _appKeyToName(v),
-    );
+    return _buildGenericTable(rows: byApp.take(12).toList(), labelKey: 'appKey', labelFormatter: (v) => _appKeyToName(v));
   }
 
   Widget _buildByAdSection(double width) {
@@ -654,11 +847,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       'banner': AppStrings.t('banner', l),
       'offerWall': AppStrings.t('offerwall', l),
     };
-    return _buildGenericTable(
-      rows: byAd.take(12).toList(),
-      labelKey: 'adUnit',
-      labelFormatter: (v) => adLabels[v ?? ''] ?? (v ?? '-'),
-    );
+    return _buildGenericTable(rows: byAd.take(12).toList(), labelKey: 'adUnit', labelFormatter: (v) => adLabels[v ?? ''] ?? (v ?? '-'));
   }
 
   Widget _buildByPlatformSection(double width) {
@@ -671,11 +860,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
     final platformLabels = {'android': AppStrings.t('android', l), 'ios': AppStrings.t('ios', l)};
-    return _buildGenericTable(
-      rows: byPlatform.take(12).toList(),
-      labelKey: 'platform',
-      labelFormatter: (v) => platformLabels[v ?? ''] ?? (v ?? '-'),
-    );
+    return _buildGenericTable(rows: byPlatform.take(12).toList(), labelKey: 'platform', labelFormatter: (v) => platformLabels[v ?? ''] ?? (v ?? '-'));
   }
 
   Widget _buildGenericTable({
@@ -691,13 +876,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final colRev = (w * 0.28).clamp(55.0, 100.0);
         final colImp = (w * 0.27).clamp(55.0, 100.0);
         final smallFont = w < 320;
-        final labelStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
-          fontWeight: FontWeight.w500,
-          fontSize: smallFont ? 11 : null,
-        );
-        final numStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
-          fontSize: smallFont ? 10 : null,
-        );
+        final labelStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500, fontSize: smallFont ? 11 : null);
+        final numStyle = Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: smallFont ? 10 : null);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -742,10 +922,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         byApp[appKey]!['impressions'] = (byApp[appKey]!['impressions'] as int) + imp;
       }
     }
-    return byApp.entries
-        .where((e) => e.key != '__all__')
-        .map((e) => {'appKey': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']})
-        .toList()
+    return byApp.entries.where((e) => e.key != '__all__').map((e) => {'appKey': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']}).toList()
       ..sort((a, b) => (b['revenue'] as num).compareTo(a['revenue'] as num));
   }
 
@@ -767,9 +944,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     }
     const order = ['rewardedVideo', 'interstitial', 'banner', 'offerWall', 'unknown'];
-    return byAd.entries
-        .map((e) => {'adUnit': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']})
-        .toList()
+    return byAd.entries.map((e) => {'adUnit': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']}).toList()
       ..sort((a, b) {
         final ai = order.indexOf(a['adUnit'] as String);
         final bi = order.indexOf(b['adUnit'] as String);
@@ -790,10 +965,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         byPlatform[platform]!['impressions'] = (byPlatform[platform]!['impressions'] as int) + imp;
       }
     }
-    return byPlatform.entries
-        .where((e) => e.key != '__all__')
-        .map((e) => {'platform': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']})
-        .toList()
+    return byPlatform.entries.where((e) => e.key != '__all__').map((e) => {'platform': e.key, 'revenue': e.value['revenue'], 'impressions': e.value['impressions']}).toList()
       ..sort((a, b) => (b['revenue'] as num).compareTo(a['revenue'] as num));
   }
 
@@ -808,14 +980,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: EdgeInsets.fromLTRB(padding, 8, padding, 0),
+            padding: EdgeInsets.fromLTRB(padding, 20, padding, 0),
             child: _buildDateFilters(),
           ),
-          SizedBox(height: padding),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: padding),
-            child: _buildFiltersSection(),
-          ),
+          if (_selectedNetworks.length == 1 && !_selectedNetworks.contains('applovin')) ...[
+            SizedBox(height: padding),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: padding),
+              child: _buildFiltersSection(),
+            ),
+          ],
           const SizedBox(height: 4),
           _buildDetailPage(metricId, locale),
         ],
@@ -1132,151 +1306,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return buf.toString();
   }
 
-  /// Contenido de la tabla por país (sin Card, para usar dentro de sección colapsable).
-  Widget _buildCountriesSection() {
-    final byCountry = _aggregateByCountry();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (byCountry.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(
-              AppStrings.t('no_country_data', LocaleNotifier.current),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          )
-        else ...[
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(
-              AppStrings.t('country_table_discrepancy', LocaleNotifier.current),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontSize: 10,
-                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-              ),
-            ),
-          ),
-          Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  LayoutBuilder(
-                    builder: (context, c) {
-                      final w = c.maxWidth;
-                      final colRev = w > 400 ? 90.0 : 70.0;
-                      final colImp = w > 400 ? 100.0 : 88.0;
-                      final colCountry = w - colRev - colImp - 16;
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: colCountry,
-                                child: Text(
-                                  AppStrings.t('filter_country', LocaleNotifier.current),
-                                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                      ),
-                                  overflow: TextOverflow.visible,
-                                ),
-                              ),
-                              SizedBox(
-                                width: colRev,
-                                child: Text(
-                                  AppStrings.t('revenue', LocaleNotifier.current),
-                                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                      ),
-                                  textAlign: TextAlign.end,
-                                  overflow: TextOverflow.visible,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                width: colImp,
-                                child: Text(
-                                  AppStrings.t('impressions', LocaleNotifier.current),
-                                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                      ),
-                                  textAlign: TextAlign.end,
-                                  overflow: TextOverflow.visible,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          ...byCountry.take(12).map((r) {
-                            final code = r['countryCode'] as String?;
-                            final name = formatCountry(code, LocaleNotifier.current);
-                            final rev = (r['revenue'] as num).toDouble();
-                            final imp = r['impressions'] as int;
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: Row(
-                                children: [
-                                  SizedBox(
-                                    width: colCountry,
-                                    child: Text(
-                                      name,
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: colRev,
-                                    child: Text(
-                                      formatMoney(rev),
-                                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        color: Theme.of(context).colorScheme.primary,
-                                      ),
-                                      textAlign: TextAlign.end,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  SizedBox(
-                                    width: colImp,
-                                    child: Text(
-                                      formatNumber(imp),
-                                      style: Theme.of(context).textTheme.bodySmall,
-                                      textAlign: TextAlign.end,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }),
-                        ],
-                      );
-                    },
-                  ),
-                ],
-              ),
-        ],
-      ],
-    );
-  }
-
-  /// Lista unificada: countryCodesForFilter + países que aparecen en los datos.
-  /// Con breakdowns: 'date' las filas no tienen country; usamos _filterMetadataRows.
+  /// Solo países que aparecen en los datos de la(s) red(es) seleccionada(s).
   List<String> get _countryFilterOptions {
-    final base = countryCodesForFilter.toSet();
+    final set = <String>{};
     for (final row in _filterMetadataRows) {
       final c = (row.country ?? '').trim().toUpperCase();
-      if (c.isNotEmpty) base.add(c);
+      if (c.isNotEmpty) set.add(c);
     }
-    return base.toList()..sort();
+    return set.toList()..sort();
   }
 
   Widget _buildFiltersSection() {
@@ -1415,6 +1452,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
       valueLabel: valueLabel,
       compact: compact,
       onTap: () async {
+        if (apps.isEmpty) {
+          if (!mounted) return;
+          final msg = _selectedNetworks.length == 1 && _selectedNetworks.contains('admob')
+              ? AppStrings.t('no_apps_configured_admob', l)
+              : AppStrings.t('no_apps_detected', l);
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: Text(AppStrings.t('app_filter', l)),
+              content: Text(msg),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
         final options = apps.map((a) => '${a.appKey}|${a.platform ?? ''}').toList();
         final labels = apps.map((a) => '${a.appName ?? a.appKey} (${a.platform ?? ''})').toList();
         final allSelectedForDialog = selected.isEmpty || (optsCount > 0 && apps.every((a) => selectedSet.contains(a.appKey)));
@@ -1493,6 +1550,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
       valueLabel: label,
       compact: compact,
       onTap: () async {
+        if (options.isEmpty) {
+          if (!mounted) return;
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: Text(AppStrings.t('filter_country', l)),
+              content: Text(AppStrings.t('no_country_filter_available', l)),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
         final allSelectedForDialog = selected.isEmpty || allSelected;
         final chosen = await _showMultiSelect(
           title: AppStrings.t('filter_country', l),
@@ -1646,37 +1720,75 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   List<DataRow> _dataTableRows(List<Map<String, dynamic>> aggregated) {
+    final l = LocaleNotifier.current;
     return aggregated.map((r) {
-      final dateStr = r['date'] as String;
-      final impressions = r['impressions'] as int;
-      final ecpm = (r['eCPM'] as num).toDouble();
-      final clicks = r['clicks'] as int;
-      final completions = r['completions'] as int;
-      final fillRate = r['fillRate'] as double?;
-      final completionRate = r['completionRate'] as double?;
-      final revPerComp = r['revenuePerCompletion'] as double?;
-      final ctr = r['ctr'] as double?;
-      final appRequests = r['appRequests'] as int?;
-      final dau = r['dau'] as int?;
-      final sessions = r['sessions'] as int?;
-      return DataRow(
-        cells: [
-          DataCell(Tooltip(message: dateStr, child: Text(dateStr))),
-          DataCell(_cell(formatMoney((r['revenue'] as num).toDouble()))),
-          DataCell(_cell(formatNumber(impressions))),
-          DataCell(_cell(formatMoney(ecpm))),
-          DataCell(_cell(formatNumber(clicks))),
-          DataCell(_cell(formatNumber(completions))),
-          DataCell(_cell(fillRate != null ? '${formatDecimal(fillRate)}%' : '—')),
-          DataCell(_cell(completionRate != null ? '${formatDecimal(completionRate)}%' : '—')),
-          DataCell(_cell(revPerComp != null ? formatMoney(revPerComp) : '—')),
-          DataCell(_cell(ctr != null ? '${formatDecimal(ctr)}%' : '—')),
-          DataCell(_cell(appRequests != null ? formatNumber(appRequests) : '—')),
-          DataCell(_cell(dau != null ? formatNumber(dau) : '—')),
-          DataCell(_cell(sessions != null ? formatNumber(sessions) : '—')),
-        ],
-      );
+      final cells = <DataCell>[
+        DataCell(Tooltip(message: r['date'] as String, child: Text(r['date'] as String))),
+      ];
+      for (final mid in _metricIds) {
+        cells.add(DataCell(_cell(_formatTableCell(r, mid, l))));
+      }
+      return DataRow(cells: cells);
     }).toList();
+  }
+
+  String _metricLabel(String metricId) {
+    final l = LocaleNotifier.current;
+    switch (metricId) {
+      case 'revenue': return AppStrings.t('income', l);
+      case 'impressions': return AppStrings.t('impressions', l);
+      case 'ecpm': return AppStrings.t('ecpm', l);
+      case 'clicks': return AppStrings.t('clicks', l);
+      case 'completions': return AppStrings.t('completions', l);
+      case 'fill_rate': return AppStrings.t('fill_rate', l);
+      case 'completion_rate': return AppStrings.t('completion_rate', l);
+      case 'revenue_per_completion': return AppStrings.t('rev_comp', l);
+      case 'ctr': return AppStrings.t('ctr', l);
+      case 'app_requests': return AppStrings.t('app_requests', l);
+      case 'dau': return AppStrings.t('dau', l);
+      case 'sessions': return AppStrings.t('sessions', l);
+      default: return metricId;
+    }
+  }
+
+  String _formatTableCell(Map<String, dynamic> r, String metricId, String l) {
+    switch (metricId) {
+      case 'revenue':
+        return formatMoney((r['revenue'] as num?)?.toDouble() ?? 0);
+      case 'impressions':
+        return formatNumber(r['impressions'] as int? ?? 0);
+      case 'ecpm':
+        return formatMoney((r['eCPM'] as num?)?.toDouble() ?? 0);
+      case 'clicks':
+        final v = r['clicks'] as int?;
+        return v != null ? formatNumber(v) : '—';
+      case 'completions':
+        final v = r['completions'] as int?;
+        return v != null ? formatNumber(v) : '—';
+      case 'fill_rate':
+        final v = r['fillRate'] as double?;
+        return v != null ? '${formatDecimal(v)}%' : '—';
+      case 'completion_rate':
+        final v = r['completionRate'] as double?;
+        return v != null ? '${formatDecimal(v)}%' : '—';
+      case 'revenue_per_completion':
+        final v = r['revenuePerCompletion'] as double?;
+        return v != null ? formatMoney(v) : '—';
+      case 'ctr':
+        final v = r['ctr'] as double?;
+        return v != null ? '${formatDecimal(v)}%' : '—';
+      case 'app_requests':
+        final v = r['appRequests'] as int?;
+        return v != null ? formatNumber(v) : '—';
+      case 'dau':
+        final v = r['dau'] as int?;
+        return v != null ? formatNumber(v) : '—';
+      case 'sessions':
+        final v = r['sessions'] as int?;
+        return v != null ? formatNumber(v) : '—';
+      default:
+        return '—';
+    }
   }
 
   Widget _cell(String text) => Tooltip(message: text, child: SelectableText(text));
@@ -1729,18 +1841,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               columns: [
                 DataColumn(label: Text(AppStrings.t('date', LocaleNotifier.current))),
-                DataColumn(label: Text(AppStrings.t('income', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('impressions', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('ecpm', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('clicks', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('completions', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('fill_rate', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('completion_rate', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('rev_comp', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('ctr', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('app_requests', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('dau', LocaleNotifier.current)), numeric: true),
-                DataColumn(label: Text(AppStrings.t('sessions', LocaleNotifier.current)), numeric: true),
+                ..._metricIds.map((mid) => DataColumn(
+                  label: Text(_metricLabel(mid), overflow: TextOverflow.ellipsis),
+                  numeric: true,
+                )),
               ],
               rows: _dataTableRows(aggregated),
             ),
