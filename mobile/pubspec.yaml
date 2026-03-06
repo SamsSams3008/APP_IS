@@ -1,7 +1,7 @@
 name: mobile
 description: Ad Revenue Dashboard - For ironSource. Flutter app for Android & iOS.
 publish_to: 'none'
-version: 1.0.4+4
+version: 1.0.4+5
 
 environment:
   sdk: ^3.10.8
@@ -20,6 +20,8 @@ dependencies:
   url_launcher: ^6.3.0
   webview_flutter: ^4.10.0
   shared_preferences: ^2.3.3
+  flutter_secure_storage: ^9.2.4
+  in_app_purchase: ^3.2.0
   crypto: ^3.0.3
   flutter_web_auth_2: ^3.1.0
 

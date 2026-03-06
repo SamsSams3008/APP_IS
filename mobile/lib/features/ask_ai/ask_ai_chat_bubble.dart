@@ -12,9 +12,11 @@ class AskAiChatBubble extends StatelessWidget {
   const AskAiChatBubble({
     super.key,
     required this.dataSummary,
+    this.isLocked = false,
   });
 
   final String? dataSummary;
+  final bool isLocked;
 
   bool get _backendConfigured => kAskAiBackendUrl.isNotEmpty;
 
@@ -25,7 +27,7 @@ class AskAiChatBubble extends StatelessWidget {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _AskAiChatSheet(dataSummary: dataSummary),
+      builder: (context) => _AskAiChatSheet(dataSummary: dataSummary, isLocked: isLocked),
     );
   }
 
@@ -54,11 +56,7 @@ class AskAiChatBubble extends StatelessWidget {
             width: 60,
             height: 60,
             alignment: Alignment.center,
-            child: Icon(
-              Icons.auto_awesome,
-              size: 30,
-              color: iconColor,
-            ),
+            child: Icon(Icons.auto_awesome, size: 30, color: iconColor),
           ),
         ),
       ),
@@ -73,9 +71,10 @@ class _ChatMessage {
 }
 
 class _AskAiChatSheet extends StatefulWidget {
-  const _AskAiChatSheet({required this.dataSummary});
+  const _AskAiChatSheet({required this.dataSummary, this.isLocked = false});
 
   final String? dataSummary;
+  final bool isLocked;
 
   @override
   State<_AskAiChatSheet> createState() => _AskAiChatSheetState();
@@ -110,7 +109,10 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
     try {
       final res = await http.post(
         Uri.parse(kAskAiBackendUrl),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-App-Token': kAskAiAppToken,
+        },
         body: jsonEncode({
           'question': question,
           'dataSummary': data,
@@ -167,6 +169,7 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
     final cs = Theme.of(context).colorScheme;
     final h = MediaQuery.of(context).size.height;
     final viewInsets = MediaQuery.of(context).viewInsets;
+    final locked = widget.isLocked;
     return Padding(
       padding: EdgeInsets.only(bottom: viewInsets.bottom),
       child: Container(
@@ -199,6 +202,31 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
               ],
             ),
           ),
+          if (locked)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              decoration: BoxDecoration(
+                color: cs.primaryContainer.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.lock_outline, size: 20, color: cs.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      AppStrings.t('requires_pro_ai', LocaleNotifier.current),
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: cs.onSurface,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -275,15 +303,20 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
                 Expanded(
                   child: TextField(
                     controller: _inputController,
+                    readOnly: locked,
+                    enabled: !locked,
                     style: TextStyle(
                       color: cs.onSurface.withValues(alpha: 0.85),
                     ),
                     decoration: InputDecoration(
-                      hintText: AppStrings.t('ask_ai_input_example', LocaleNotifier.current),
+                      hintText: locked
+                          ? null
+                          : AppStrings.t('ask_ai_input_example', LocaleNotifier.current),
                       hintStyle: TextStyle(
                         fontSize: 12,
                         color: cs.onSurface.withValues(alpha: 0.3),
                       ),
+                      prefixIcon: locked ? const Icon(Icons.lock_outline, size: 20) : null,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24),
                       ),
@@ -300,7 +333,7 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
                 ),
                 const SizedBox(width: 8),
                 IconButton.filled(
-                  onPressed: _loading ? null : _send,
+                  onPressed: (locked || _loading) ? null : _send,
                   icon: const Icon(Icons.send_rounded),
                 ),
               ],

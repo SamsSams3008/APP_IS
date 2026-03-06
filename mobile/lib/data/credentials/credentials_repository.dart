@@ -1,6 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/storage/secure_credentials_storage.dart';
 
 /// Credenciales para Bearer API (Secret Key + Refresh Token).
 /// Se obtienen en IronSource → Mi cuenta → My Account.
@@ -14,35 +15,59 @@ class IronSourceCredentials {
   final String refreshToken;
 }
 
-/// Guarda y lee Secret Key y Refresh Token con SharedPreferences.
-/// Evita el error de Keychain en iOS (-34018) y funciona en todos los dispositivos.
+/// Credenciales: se guardan en SharedPreferences (siempre) y en almacenamiento
+/// seguro (Keychain/Keystore) cuando está disponible. Lectura: primero secure,
+/// si falla o está vacío se usa prefs. Así no se pierde nada y en iOS/Android
+/// se usa el almacenamiento más seguro.
 class CredentialsRepository {
-  CredentialsRepository({SharedPreferences? prefs}) : _prefs = prefs;
+  CredentialsRepository({
+    SharedPreferences? prefs,
+    SecureCredentialsStorage? secure,
+  })  : _prefs = prefs,
+        _secure = secure ?? SecureCredentialsStorage();
 
   SharedPreferences? _prefs;
+  final SecureCredentialsStorage _secure;
 
   Future<SharedPreferences> get _store async {
     _prefs ??= await SharedPreferences.getInstance();
     return _prefs!;
   }
 
-  Future<IronSourceCredentials?> getCredentials() async {
+  /// Lee: primero secure; si no hay valor, prefs. No se borra nada de prefs.
+  Future<String?> _get(String key) async {
+    var v = await _secure.read(key);
+    if (v != null && v.trim().isNotEmpty) return v.trim();
     final store = await _store;
-    final secretKey = store.getString(AppConstants.storageSecretKey);
-    final refreshToken = store.getString(AppConstants.storageRefreshToken);
-    if (secretKey != null && refreshToken != null &&
-        secretKey.isNotEmpty && refreshToken.isNotEmpty) {
+    v = store.getString(key);
+    return (v != null && v.trim().isNotEmpty) ? v.trim() : null;
+  }
+
+  /// Escribe: primero prefs (respaldo), luego secure. No se pierde nada si secure falla.
+  Future<void> _set(String key, String value) async {
+    final store = await _store;
+    await store.setString(key, value.trim());
+    await _secure.write(key, value.trim());
+  }
+
+  Future<void> _remove(String key) async {
+    final store = await _store;
+    await store.remove(key);
+    await _secure.delete(key);
+  }
+
+  Future<IronSourceCredentials?> getCredentials() async {
+    final secretKey = await _get(AppConstants.storageSecretKey);
+    final refreshToken = await _get(AppConstants.storageRefreshToken);
+    if (secretKey != null && refreshToken != null) {
       return IronSourceCredentials(secretKey: secretKey, refreshToken: refreshToken);
     }
     return null;
   }
 
   Future<void> saveCredentials(String secretKey, String refreshToken) async {
-    final sk = secretKey.trim();
-    final rt = refreshToken.trim();
-    final store = await _store;
-    await store.setString(AppConstants.storageSecretKey, sk);
-    await store.setString(AppConstants.storageRefreshToken, rt);
+    await _set(AppConstants.storageSecretKey, secretKey.trim());
+    await _set(AppConstants.storageRefreshToken, refreshToken.trim());
   }
 
   Future<bool> hasCredentials() async {
@@ -58,83 +83,43 @@ class CredentialsRepository {
     return (pubId != null && pubId.isNotEmpty) && (refresh != null && refresh.isNotEmpty);
   }
 
-  /// AppLovin MAX Report Key (Account > Keys in dash.applovin.com)
-  Future<String?> getAppLovinReportKey() async {
-    final store = await _store;
-    return store.getString(AppConstants.storageAppLovinReportKey);
-  }
+  Future<String?> getAppLovinReportKey() async => _get(AppConstants.storageAppLovinReportKey);
 
-  Future<void> saveAppLovinReportKey(String reportKey) async {
-    final store = await _store;
-    await store.setString(
-      AppConstants.storageAppLovinReportKey,
-      reportKey.trim(),
-    );
-  }
+  Future<void> saveAppLovinReportKey(String reportKey) async =>
+      _set(AppConstants.storageAppLovinReportKey, reportKey);
 
-  /// AdMob Publisher ID (ca-app-pub-xxxxxxxx~yyyyyyyyy)
-  Future<String?> getAdMobPublisherId() async {
-    final store = await _store;
-    final v = store.getString(AppConstants.storageAdMobPublisherId);
-    return (v != null && v.trim().isNotEmpty) ? v.trim() : null;
-  }
+  Future<String?> getAdMobPublisherId() async => _get(AppConstants.storageAdMobPublisherId);
 
-  Future<void> saveAdMobPublisherId(String publisherId) async {
-    final store = await _store;
-    await store.setString(
-      AppConstants.storageAdMobPublisherId,
-      publisherId.trim(),
-    );
-  }
+  Future<void> saveAdMobPublisherId(String publisherId) async =>
+      _set(AppConstants.storageAdMobPublisherId, publisherId);
 
-  Future<String?> getAdMobRefreshToken() async {
-    final store = await _store;
-    final v = store.getString(AppConstants.storageAdMobRefreshToken);
-    return (v != null && v.trim().isNotEmpty) ? v.trim() : null;
-  }
+  Future<String?> getAdMobRefreshToken() async => _get(AppConstants.storageAdMobRefreshToken);
 
-  Future<void> saveAdMobRefreshToken(String token) async {
-    final store = await _store;
-    await store.setString(AppConstants.storageAdMobRefreshToken, token.trim());
-  }
+  Future<void> saveAdMobRefreshToken(String token) async =>
+      _set(AppConstants.storageAdMobRefreshToken, token);
 
-  Future<void> clearAdMobRefreshToken() async {
-    final store = await _store;
-    await store.remove(AppConstants.storageAdMobRefreshToken);
-  }
+  Future<void> clearAdMobRefreshToken() async =>
+      _remove(AppConstants.storageAdMobRefreshToken);
 
-  /// Borra todas las credenciales AdMob (desconectar).
   Future<void> clearAllAdMob() async {
-    final store = await _store;
-    await store.remove(AppConstants.storageAdMobPublisherId);
-    await store.remove(AppConstants.storageAdMobRefreshToken);
-    await store.remove(AppConstants.storageAdMobClientId);
-    await store.remove(AppConstants.storageAdMobClientSecret);
+    await _remove(AppConstants.storageAdMobPublisherId);
+    await _remove(AppConstants.storageAdMobRefreshToken);
+    await _remove(AppConstants.storageAdMobClientId);
+    await _remove(AppConstants.storageAdMobClientSecret);
   }
 
-  Future<String?> getAdMobClientId() async {
-    final store = await _store;
-    final v = store.getString(AppConstants.storageAdMobClientId);
-    return (v != null && v.trim().isNotEmpty) ? v.trim() : null;
-  }
+  Future<String?> getAdMobClientId() async => _get(AppConstants.storageAdMobClientId);
 
-  Future<void> saveAdMobClientId(String clientId) async {
-    final store = await _store;
-    await store.setString(AppConstants.storageAdMobClientId, clientId.trim());
-  }
+  Future<void> saveAdMobClientId(String clientId) async =>
+      _set(AppConstants.storageAdMobClientId, clientId);
 
-  Future<String?> getAdMobClientSecret() async {
-    final store = await _store;
-    final v = store.getString(AppConstants.storageAdMobClientSecret);
-    return (v != null && v.trim().isNotEmpty) ? v.trim() : null;
-  }
+  Future<String?> getAdMobClientSecret() async => _get(AppConstants.storageAdMobClientSecret);
 
   Future<void> saveAdMobClientSecret(String? secret) async {
-    final store = await _store;
     if (secret == null || secret.trim().isEmpty) {
-      await store.remove(AppConstants.storageAdMobClientSecret);
+      await _remove(AppConstants.storageAdMobClientSecret);
     } else {
-      await store.setString(AppConstants.storageAdMobClientSecret, secret.trim());
+      await _set(AppConstants.storageAdMobClientSecret, secret);
     }
   }
 }

@@ -6,3 +6,7 @@
 /// 2. Pon aquí la URL, por ejemplo: https://tu-proyecto.vercel.app/api/ask-ai
 /// 3. Deja [kAskAiBackendUrl] con esa URL y los usuarios no tendrán que meter ninguna key.
 const String kAskAiBackendUrl = 'https://app-is.vercel.app/api/ask-ai';
+
+/// Token enviado en cada petición para validar origen. Debe coincidir con ASK_AI_APP_TOKEN
+/// en Vercel (Environment Variables). Si no lo configuras en Vercel, el backend usa este valor por defecto.
+const String kAskAiAppToken = 'adrev-dash-ai-2025-7f3b9c2e';

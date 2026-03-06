@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/error_utils.dart';
+import '../../../../core/subscription/subscription_notifier.dart';
+import '../../../../core/subscription/subscription_tier.dart';
 import '../../../../features/ask_ai/ask_ai_chat_bubble.dart';
 import '../widgets/metric_detail_content.dart';
 import '../../../../core/credentials_updated_notifier.dart';
@@ -371,7 +373,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(
       valueListenable: LocaleNotifier.valueNotifier,
-      builder: (context, locale, _) => Scaffold(
+      builder: (context, locale, _) => ValueListenableBuilder<SubscriptionTier>(
+        valueListenable: SubscriptionNotifier.valueNotifier,
+        builder: (context, tier, _) {
+          if (tier == SubscriptionTier.basic && _currentTabIndex != 0) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && SubscriptionNotifier.current == SubscriptionTier.basic) {
+                setState(() => _currentTabIndex = 0);
+                _mainPageController.animateToPage(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+              }
+            });
+          }
+          return Scaffold(
       appBar: AppBar(
         toolbarHeight: 44,
         flexibleSpace: Container(
@@ -396,12 +409,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
           tooltip: ThemeModeNotifier.current == ThemeMode.light ? AppStrings.t('dark_mode', locale) : AppStrings.t('light_mode', locale),
         ),
         title: Text(
-          _currentTabIndex == 0 ? AppStrings.t('tab_home', locale)
-              : _currentTabIndex == 1 ? AppStrings.t('tab_table', locale)
-              : AppStrings.t('tab_details', locale),
+          _currentTabIndex == 0 ? AppStrings.t('tab_home', locale) : _currentTabIndex == 1 ? AppStrings.t('tab_table', locale) : AppStrings.t('tab_details', locale),
           style: const TextStyle(color: _heroTextPrimary, fontSize: 17),
         ),
         actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Center(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => context.push('/subscriptions'),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: _heroTextPrimary.withValues(alpha: 0.6), width: 1),
+                    ),
+                    child: Text(
+                      tier == SubscriptionTier.basic ? AppStrings.t('tier_basic', locale) : AppStrings.t('tier_pro', locale),
+                      style: const TextStyle(color: _heroTextPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.settings, color: _heroTextPrimary),
             onPressed: () => context.push('/credentials'),
@@ -417,16 +451,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: _buildNetworkSelector(locale),
           ),
           NavigationBar(
-            selectedIndex: _currentTabIndex,
+            selectedIndex: _currentTabIndex.clamp(0, 2),
             onDestinationSelected: (i) {
+              if (i == 3) {
+                context.push('/subscriptions');
+                return;
+              }
+              if (i == 1 && !tier.hasTable) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.t('requires_pro', locale))));
+                return;
+              }
+              if (i == 2 && !tier.hasDetails) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.t('requires_pro', locale))));
+                return;
+              }
               setState(() => _currentTabIndex = i);
               final page = i == 0 ? 0 : i == 1 ? 1 : 2 + _detailsMetricIndex;
               _mainPageController.animateToPage(page, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
             },
             destinations: [
               NavigationDestination(icon: const Icon(Icons.home_outlined), selectedIcon: const Icon(Icons.home), label: AppStrings.t('tab_home', locale)),
-              NavigationDestination(icon: const Icon(Icons.table_chart_outlined), selectedIcon: const Icon(Icons.table_chart), label: AppStrings.t('tab_table', locale)),
-              NavigationDestination(icon: const Icon(Icons.bar_chart_outlined), selectedIcon: const Icon(Icons.bar_chart), label: AppStrings.t('tab_details', locale)),
+              NavigationDestination(
+                icon: _navIconWithLock(Icons.table_chart_outlined, tier.hasTable),
+                selectedIcon: _navIconWithLock(Icons.table_chart, tier.hasTable),
+                label: AppStrings.t('tab_table', locale),
+              ),
+              NavigationDestination(
+                icon: _navIconWithLock(Icons.bar_chart_outlined, tier.hasDetails),
+                selectedIcon: _navIconWithLock(Icons.bar_chart, tier.hasDetails),
+                label: AppStrings.t('tab_details', locale),
+              ),
+              NavigationDestination(icon: const Icon(Icons.workspace_premium_outlined), selectedIcon: const Icon(Icons.workspace_premium), label: AppStrings.t('tab_subscriptions', locale)),
             ],
           ),
         ],
@@ -454,6 +509,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         controller: _mainPageController,
                         physics: const BouncingScrollPhysics(),
                         onPageChanged: (i) {
+                          final tier = SubscriptionNotifier.current;
+                          if (i == 1 && !tier.hasTable) {
+                            _mainPageController.animateToPage(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+                            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.t('requires_pro', LocaleNotifier.current))));
+                            return;
+                          }
+                          if (i >= 2 && !tier.hasDetails) {
+                            _mainPageController.animateToPage(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+                            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.t('requires_pro', LocaleNotifier.current))));
+                            return;
+                          }
                           setState(() {
                             _filtersExpanded = false;
                             if (i == 0) {
@@ -469,7 +535,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         itemCount: 2 + _metricIds.length,
                         itemBuilder: (context, index) {
                           if (index == 0) return RepaintBoundary(child: _buildHomeTab(locale));
-                          if (index == 1) return RepaintBoundary(child: _buildTableTab(locale));
+                          if (index == 1) {
+                            if (!tier.hasTable) return const SizedBox.shrink();
+                            return RepaintBoundary(child: _buildTableTab(locale));
+                          }
+                          if (!tier.hasDetails) return const SizedBox.shrink();
                           return RepaintBoundary(child: _buildDetailPageWithFilters(_metricIds[index - 2], locale));
                         },
                       ),
@@ -491,11 +561,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                           ),
                         ),
-                      AskAiChatBubble(dataSummary: _buildDataSummaryForAi()),
+                      AskAiChatBubble(dataSummary: _buildDataSummaryForAi(), isLocked: !tier.hasAi),
                     ],
                   ),
       ),
-    ));
+    );
+        },
+      ),
+    );
+  }
+
+  Widget _navIconWithLock(IconData icon, bool unlocked) {
+    if (unlocked) return Icon(icon);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(icon),
+        Positioned(right: -2, top: -2, child: Icon(Icons.lock, size: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      ],
+    );
   }
 
   Widget _buildHomeTab(String locale) {
@@ -518,6 +602,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _buildMainHeroCard(locale),
             SizedBox(height: padding),
             ..._buildSecondaryCardsList(locale),
+            if (SubscriptionNotifier.current == SubscriptionTier.basic) ...[
+              SizedBox(height: padding),
+              _buildCollapsibleSection(
+                title: AppStrings.t('totals_by_day', LocaleNotifier.current),
+                expanded: _totalsByDayExpanded,
+                onToggle: () => setState(() => _totalsByDayExpanded = !_totalsByDayExpanded),
+                child: _buildTotalsByDayTable(MediaQuery.of(context).size.width),
+              ),
+            ],
           ],
         ],
       ),
@@ -609,20 +702,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildNetworkSelector(String locale) {
     final l = LocaleNotifier.current;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Expanded(flex: 1, child: SizedBox(height: _networkChipHeight, child: Center(child: _buildNetworkChip('ironSource', AppStrings.t('ironsource_section', l), _hasIronSource)))),
-            const SizedBox(width: 6),
-            Expanded(flex: 1, child: SizedBox(height: _networkChipHeight, child: Center(child: _buildNetworkChip('applovin', AppStrings.t('applovin_section', l), _hasAppLovin)))),
-            const SizedBox(width: 6),
-            Expanded(flex: 1, child: SizedBox(height: _networkChipHeight, child: Center(child: _buildNetworkChip('admob', AppStrings.t('admob_label', l), _hasAdMob)))),
-          ],
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gap = 6.0;
+        final chipWidth = (constraints.maxWidth - 2 * gap) / 3;
+        return SizedBox(
+          height: _networkChipHeight,
+          child: Row(
+            children: [
+              SizedBox(width: chipWidth, child: Center(child: _buildNetworkChip('ironSource', AppStrings.t('ironsource_section', l), _hasIronSource))),
+              SizedBox(width: gap),
+              SizedBox(width: chipWidth, child: Center(child: _buildNetworkChip('applovin', AppStrings.t('applovin_section', l), _hasAppLovin))),
+              SizedBox(width: gap),
+              SizedBox(width: chipWidth, child: Center(child: _buildNetworkChip('admob', AppStrings.t('admob_label', l), _hasAdMob))),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -634,8 +730,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final chip = FilterChip(
       label: FittedBox(
         fit: BoxFit.scaleDown,
-        alignment: Alignment.center,
-        child: Text(label, style: const TextStyle(fontSize: 12), maxLines: 1),
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 12),
+          maxLines: 1,
+        ),
       ),
       selected: selected,
       onSelected: enabled
@@ -660,10 +759,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             }
           : null,
       selectedColor: enabled ? cs.primaryContainer : null,
-      checkmarkColor: cs.primary,
-      showCheckmark: enabled,
+      showCheckmark: false,
       backgroundColor: enabled ? null : cs.surfaceContainerHighest.withValues(alpha: 0.6),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       side: BorderSide(color: cs.outline.withValues(alpha: 0.3)),
@@ -983,7 +1081,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             padding: EdgeInsets.fromLTRB(padding, 20, padding, 0),
             child: _buildDateFilters(),
           ),
-          if (_selectedNetworks.length == 1 && !_selectedNetworks.contains('applovin')) ...[
+          if (SubscriptionNotifier.current.hasFilters && _selectedNetworks.length == 1 && !_selectedNetworks.contains('applovin')) ...[
             SizedBox(height: padding),
             Padding(
               padding: EdgeInsets.symmetric(horizontal: padding),
@@ -1070,6 +1168,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _goToDetailTab(String metricId) {
+    if (!SubscriptionNotifier.current.hasDetails) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppStrings.t('requires_pro', LocaleNotifier.current))),
+      );
+      return;
+    }
     final idx = _metricIds.indexOf(metricId);
     if (idx < 0) return;
     setState(() {
@@ -1486,6 +1590,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
         if (chosen != null && mounted) {
           final all = chosen.isEmpty || (options.isNotEmpty && chosen.length >= options.length);
+          if (!SubscriptionNotifier.current.hasFilters && !all) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.t('requires_pro_filters', LocaleNotifier.current))));
+            return;
+          }
           final appKeys = all ? null : chosen.map((s) => s.split('|').first).toSet().toList();
           setState(() => _filters = _filters.copyWith(appKeys: appKeys, clearAppKeys: all));
           _onFiltersChanged();
@@ -1509,6 +1617,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final chosen = await _showMultiSelect(title: AppStrings.t('filter_ad_type', l), options: options, labels: labels, selected: allSelected ? options.toSet() : selected.toSet());
         if (chosen != null && mounted) {
           final all = chosen.isEmpty || chosen.length >= options.length;
+          if (!SubscriptionNotifier.current.hasFilters && !all) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.t('requires_pro_filters', LocaleNotifier.current))));
+            return;
+          }
           setState(() => _filters = _filters.copyWith(adUnits: all ? null : chosen, clearAdUnits: all));
           _onFiltersChanged();
         }
@@ -1531,6 +1643,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final chosen = await _showMultiSelect(title: AppStrings.t('filter_platform', l), options: options, labels: labels, selected: allSelected ? options.toSet() : selected.toSet());
         if (chosen != null && mounted) {
           final all = chosen.isEmpty || chosen.length >= 2;
+          if (!SubscriptionNotifier.current.hasFilters && !all) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.t('requires_pro_filters', LocaleNotifier.current))));
+            return;
+          }
           setState(() => _filters = _filters.copyWith(platforms: all ? null : chosen, clearPlatforms: all));
           _onFiltersChanged();
         }
@@ -1576,6 +1692,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
         if (chosen != null && mounted) {
           final all = chosen.isEmpty || chosen.length >= options.length;
+          if (!SubscriptionNotifier.current.hasFilters && !all) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.t('requires_pro_filters', LocaleNotifier.current))));
+            return;
+          }
           setState(() => _filters = _filters.copyWith(countries: all ? null : chosen, clearCountries: all));
           _onFiltersChanged();
         }

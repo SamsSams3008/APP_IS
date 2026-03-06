@@ -41,7 +41,10 @@ class _AskAiScreenState extends State<AskAiScreen> {
     try {
       final res = await http.post(
         Uri.parse(kAskAiBackendUrl),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-App-Token': kAskAiAppToken,
+        },
         body: jsonEncode({'question': question, 'dataSummary': data}),
       );
       if (!mounted) return;

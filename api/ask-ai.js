@@ -4,15 +4,21 @@
  *
  * Despliegue en Vercel (gratis):
  * 1. Sube esta carpeta /api a un repo o ejecuta "vercel" en la raíz del proyecto.
- * 2. En Vercel → Project Settings → Environment Variables: GEMINI_API_KEY = tu key de aistudio.google.com/apikey
+ * 2. En Vercel → Project Settings → Environment Variables:
+ *    - GEMINI_API_KEY = tu key de aistudio.google.com/apikey
+ *    - ASK_AI_APP_TOKEN = (opcional) si quieres otro token distinto al por defecto
  * 3. La URL será https://tu-proyecto.vercel.app/api/ask-ai
  * 4. En la app Flutter, pon esa URL en lib/core/config/ask_ai_config.dart
+ *
+ * Seguridad: la app envía el header X-App-Token en cada petición. Sin él, se rechaza.
  */
+
+const DEFAULT_APP_TOKEN = 'adrev-dash-ai-2025-7f3b9c2e';
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-App-Token');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -20,6 +26,12 @@ module.exports = async (req, res) => {
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const expectedToken = process.env.ASK_AI_APP_TOKEN || DEFAULT_APP_TOKEN;
+  const sentToken = req.headers['x-app-token'];
+  if (!sentToken || sentToken !== expectedToken) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const apiKey = process.env.GEMINI_API_KEY;

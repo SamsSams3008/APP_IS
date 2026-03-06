@@ -5,6 +5,7 @@ import '../../features/credentials/presentation/screens/credentials_screen.dart'
 import '../../features/dashboard/presentation/screens/dashboard_screen.dart';
 import '../../features/dashboard/presentation/screens/metric_detail_screen.dart';
 import '../../features/splash/splash_screen.dart';
+import '../../features/subscriptions/subscriptions_screen.dart';
 
 class AppRouter {
   static GoRouter createRouter() {
@@ -36,6 +37,10 @@ class AppRouter {
         GoRoute(
           path: '/dashboard/ask-ai',
           builder: (context, state) => AskAiScreen(dataSummary: state.extra as String?),
+        ),
+        GoRoute(
+          path: '/subscriptions',
+          builder: (context, state) => const SubscriptionsScreen(),
         ),
       ],
     );

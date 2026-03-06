@@ -30,10 +30,9 @@ class AdMobOAuth {
     return base64UrlEncode(digest.bytes).replaceAll('=', '');
   }
 
-  /// Prepara el flujo OAuth. Retorna (authUri, future con refresh token).
-  /// El future completa cuando el servidor recibe el callback. Web app requiere clientSecret.
-  /// Resultado del flujo automático: refresh token y publisher ID.
-  static (Uri authUri, Future<({String? refreshToken, String? publisherId})?> result) prepareOAuthFlow(
+  /// Prepara el flujo OAuth. Retorna (authUri, future con refresh token, cancel).
+  /// Si el usuario cierra el diálogo sin completar, llamar [cancel] para liberar el puerto.
+  static (Uri authUri, Future<({String? refreshToken, String? publisherId})?> result, void Function() cancel) prepareOAuthFlow(
     String clientId, {
     String? clientSecret,
   }) {
@@ -53,6 +52,12 @@ class AdMobOAuth {
 
     HttpServer? server;
     final codeCompleter = Completer<String?>();
+
+    void cancel() {
+      if (!codeCompleter.isCompleted) {
+        codeCompleter.complete(null);
+      }
+    }
 
     Future<({String? refreshToken, String? publisherId})?> run() async {
       try {
@@ -104,7 +109,7 @@ class AdMobOAuth {
       }
     }
 
-    return (authUri, run());
+    return (authUri, run(), cancel);
   }
 
   /// Obtiene el primer Publisher ID de la cuenta del usuario (accounts.list).

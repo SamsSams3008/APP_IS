@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/credentials_updated_notifier.dart';
 import '../../../../core/l10n/app_strings.dart';
 import '../../../../core/locale_notifier.dart';
+import '../../../../core/subscription/subscription_notifier.dart';
+import '../../../../core/subscription/subscription_tier.dart';
 import '../../../../core/theme/theme_mode_notifier.dart';
 import '../../../../core/config/admob_oauth_credentials.dart';
 import '../../../../data/admob/admob_oauth.dart';
@@ -97,7 +99,7 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
     setState(() => _loading = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final (authUri, resultFuture) = AdMobOAuth.prepareOAuthFlow(
+      final (authUri, resultFuture, cancel) = AdMobOAuth.prepareOAuthFlow(
         clientId,
         clientSecret: clientSecret.isEmpty ? null : clientSecret,
       );
@@ -108,22 +110,27 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
         builder: (ctx) => OAuthWebViewDialog(
           authUrl: authUri.toString(),
           resultFuture: resultFuture,
+          onCancel: cancel,
         ),
       );
       if (mounted && result != null && result.refreshToken != null && result.refreshToken!.isNotEmpty) {
         await _repo.saveAdMobRefreshToken(result.refreshToken!);
         if (result.publisherId != null && result.publisherId!.isNotEmpty) {
           await _repo.saveAdMobPublisherId(result.publisherId!);
-          setState(() => _admobConnected = true);
-          CredentialsUpdatedNotifier.notify();
-          messenger.showSnackBar(
-            SnackBar(content: Text(AppStrings.t('admob_connected', LocaleNotifier.current))),
-          );
-        } else {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('No se encontró ninguna cuenta de AdMob. ¿Tienes una en admob.google.com?')),
-          );
         }
+        if (!mounted) return;
+        setState(() {
+          _admobConnected = true;
+          _loading = false;
+        });
+        CredentialsUpdatedNotifier.notify();
+        messenger.showSnackBar(
+          SnackBar(content: Text(AppStrings.t('admob_connected', LocaleNotifier.current))),
+        );
+        final navigator = GoRouter.of(context);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          navigator.go('/dashboard');
+        });
       } else if (mounted) {
         messenger.showSnackBar(
           const SnackBar(content: Text('No se pudo obtener la autorización. Intenta de nuevo.')),
@@ -400,6 +407,8 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
                           ),
                   ),
                 ),
+                const SizedBox(height: 24),
+                _buildSubscriptionSimulator(locale),
                 const SizedBox(height: 32),
                 FilledButton(
                   onPressed: _loading ? null : _submit,
@@ -420,6 +429,56 @@ class _CredentialsScreenState extends State<CredentialsScreen> {
       ),
     ),
   );
+  }
+
+  Widget _buildSubscriptionSimulator(String locale) {
+    final cs = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<SubscriptionTier>(
+      valueListenable: SubscriptionNotifier.valueNotifier,
+      builder: (context, tier, _) {
+        return Card(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: cs.outline.withValues(alpha: 0.2)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  AppStrings.t('subscription_simulator', locale),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: cs.primary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SegmentedButton<SubscriptionTier>(
+                  segments: [
+                    ButtonSegment<SubscriptionTier>(
+                      value: SubscriptionTier.basic,
+                      label: Text(AppStrings.t('tier_basic', locale)),
+                    ),
+                    ButtonSegment<SubscriptionTier>(
+                      value: SubscriptionTier.pro,
+                      label: Text(AppStrings.t('tier_pro', locale)),
+                    ),
+                  ],
+                  selected: {tier},
+                  onSelectionChanged: (Set<SubscriptionTier> selected) {
+                    SubscriptionNotifier.set(selected.first);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildIntegrationCard({

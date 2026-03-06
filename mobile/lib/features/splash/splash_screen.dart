@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/error_utils.dart';
+import '../../core/iap/iap_service.dart';
+import '../../core/subscription/subscription_notifier.dart';
 import '../../../data/credentials/credentials_repository.dart';
 import '../dashboard/data/dashboard_repository.dart';
 
@@ -20,6 +22,8 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _resolveRoute() async {
+    await SubscriptionNotifier.load();
+    await IapService.init();
     final hasCredentials = await CredentialsRepository().hasCredentials();
     if (!mounted) return;
     if (!hasCredentials) {

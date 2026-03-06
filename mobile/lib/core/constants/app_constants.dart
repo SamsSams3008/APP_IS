@@ -36,4 +36,8 @@ class AppConstants {
   static const String storageLocale = 'app_locale';
   static const String storageDashboardFilters = 'dashboard_filters';
   static const String storageMetricFiltersPrefix = 'metric_filters_';
+  static const String storageSubscriptionTier = 'subscription_tier';
+
+  /// ID del producto de suscripción Pro. Debe coincidir con el creado en App Store Connect (iOS) y Google Play Console (Android).
+  static const String iapProProductId = 'adrev_dash_pro';
 }
