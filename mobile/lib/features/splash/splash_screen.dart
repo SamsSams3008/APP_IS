@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/app_constants.dart';
@@ -60,25 +59,11 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return const Scaffold(
       backgroundColor: Colors.black,
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
+      body: ColoredBox(
         color: Colors.black,
-        child: Center(
-          child: Image.asset(
-            'assets/icon/logo.png',
-            height: 200,
-            width: 200,
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) => Icon(
-              LucideIcons.barChart2,
-              size: 96,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          ),
-        ),
+        child: SizedBox.expand(),
       ),
     );
   }

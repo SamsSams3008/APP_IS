@@ -162,7 +162,6 @@ class AppStrings {
     'ask_ai_input_hint': {'es': 'Escribe tu pregunta... La IA responderá en el idioma que uses', 'en': 'Type your question... AI will reply in the language you write'},
     'ask_ai_input_example': {'es': 'Ej: ¿Qué país tiene más ingresos? ¿Por qué bajaron mis impresiones?', 'en': 'Ex: Which country has most revenue? Why are impressions down?'},
     'total_with_filters_chart': {'es': 'Total con filtros aplicados', 'en': 'Total with applied filters'},
-    'subscription_simulator': {'es': 'Simular plan', 'en': 'Simulate plan'},
     'tier_basic': {'es': 'Básica', 'en': 'Basic'},
     'tier_pro': {'es': 'Pro', 'en': 'Pro'},
     'requires_pro': {'es': 'Disponible en Pro', 'en': 'Available in Pro'},
