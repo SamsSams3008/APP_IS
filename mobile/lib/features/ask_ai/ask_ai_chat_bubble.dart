@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/config/ask_ai_config.dart';
@@ -196,7 +197,7 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
                 ),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.close),
+                  icon: const Icon(LucideIcons.x),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
@@ -213,7 +214,7 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.lock_outline, size: 20, color: cs.primary),
+                  Icon(LucideIcons.lock, size: 20, color: cs.primary),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -316,7 +317,7 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
                         fontSize: 12,
                         color: cs.onSurface.withValues(alpha: 0.3),
                       ),
-                      prefixIcon: locked ? const Icon(Icons.lock_outline, size: 20) : null,
+                      prefixIcon: locked ? const Icon(LucideIcons.lock, size: 20) : null,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24),
                       ),
@@ -334,7 +335,7 @@ class _AskAiChatSheetState extends State<_AskAiChatSheet> {
                 const SizedBox(width: 8),
                 IconButton.filled(
                   onPressed: (locked || _loading) ? null : _send,
-                  icon: const Icon(Icons.send_rounded),
+                  icon: const Icon(LucideIcons.send),
                 ),
               ],
             ),

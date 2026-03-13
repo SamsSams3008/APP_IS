@@ -122,4 +122,11 @@ class CredentialsRepository {
       await _set(AppConstants.storageAdMobClientSecret, secret);
     }
   }
+
+  /// Borra todas las credenciales (para reset de onboarding).
+  Future<void> clearAll() async {
+    await saveCredentials('', '');
+    await _remove(AppConstants.storageAppLovinReportKey);
+    await clearAllAdMob();
+  }
 }

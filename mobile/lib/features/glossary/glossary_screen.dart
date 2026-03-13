@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/l10n/app_strings.dart';
@@ -107,7 +108,7 @@ class _GlossaryScreenState extends State<GlossaryScreen> {
                                             ),
                                       ),
                                     ),
-                                    Icon(Icons.arrow_forward_ios, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                    Icon(LucideIcons.chevronRight, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
                                   ],
                                 ),
                                 const SizedBox(height: 12),

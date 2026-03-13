@@ -1,5 +1,8 @@
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../core/error_utils.dart';
 import '../../../../core/subscription/subscription_notifier.dart';
@@ -47,6 +50,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _loading = true;
   String? _error;
   bool _filtersExpanded = false;
+  bool _moreMetricsExpanded = false;
   bool _totalsByDayExpanded = true;
   bool _byCountryExpanded = false;
   bool _byAppExpanded = false;
@@ -62,6 +66,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _cachedStartDate;
   String? _cachedEndDate;
   String? _cachedFilterKey;
+  Map<String, DashboardStats> _statsByNetwork = {};
+  String _adSourceMetric = 'revenue'; // 'revenue' | 'impressions'
+  String? _adSourceDetailNetworkId; // which network's detail card to show
+  Map<String, DashboardStats> _cachedStatsByNetwork = {};
 
   @override
   void initState() {
@@ -109,6 +117,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _tableRawRows = [];
     _cachedStartDate = null;
     _cachedEndDate = null;
+    _cachedStatsByNetwork = {};
     _load();
   }
 
@@ -158,6 +167,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _stats = DashboardRepository.statsFromRows(_cachedRawRows);
     _displayStats = _stats;
     _displayDatePreset = _filters.datePreset;
+    _statsByNetwork = _cachedStatsByNetwork;
     setState(() {});
     _loadPrevStats();
   }
@@ -215,9 +225,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
         return;
       }
-      final sel = _selectedNetworks.isEmpty
-          ? null
-          : _selectedNetworks;
+      final sel = _selectedNetworks.isEmpty ? null : _selectedNetworks;
+      final networksForStats = sel ??
+          {
+            if (providers.hasIronSource) 'ironSource',
+            if (providers.hasAppLovin) 'applovin',
+            if (providers.hasAdMob) 'admob',
+          };
       final dateFilters = DashboardFilters(
         startDate: _filters.startDate,
         endDate: _filters.endDate,
@@ -226,9 +240,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final full = await _repo.getStatsRaw(_filters, selectedNetworks: sel);
       final tableFuture = _repo.getStatsRaw(dateFilters, selectedNetworks: sel);
       final metadataFuture = _repo.getFilterMetadata(dateFilters, selectedNetworks: sel);
+      final statsByNetworkFuture = (networksForStats.length >= 2)
+          ? _repo.getStatsByNetwork(_filters, selectedNetworks: networksForStats)
+          : Future<Map<String, DashboardStats>>.value({});
       if (!mounted) return;
       _cachedRawRows = full;
       _cachedTableRawRows = await tableFuture;
+      _cachedStatsByNetwork = await statsByNetworkFuture;
       _tableRawRows = _cachedTableRawRows;
       _cachedStartDate = _filters.startDateStr;
       _cachedEndDate = _filters.endDateStr;
@@ -396,48 +414,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
         ),
-        leading: IconButton(
-          icon: Icon(
-            ThemeModeNotifier.current == ThemeMode.light ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
-            color: _heroTextPrimary,
+        leadingWidth: 80,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: Center(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => context.push('/subscriptions'),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    gradient: tier == SubscriptionTier.pro
+                        ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF1D4ED8), Color(0xFF7C3AED)])
+                        : null,
+                    border: tier == SubscriptionTier.basic ? Border.all(color: _heroTextPrimary.withValues(alpha: 0.6), width: 1) : null,
+                    boxShadow: tier == SubscriptionTier.pro ? [BoxShadow(color: const Color(0xFF1D4ED8).withOpacity(0.4), blurRadius: 8, offset: const Offset(0, 2))] : null,
+                  ),
+                  child: Text(
+                    tier == SubscriptionTier.basic ? AppStrings.t('tier_basic', locale) : AppStrings.t('tier_pro', locale),
+                    style: const TextStyle(color: _heroTextPrimary, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5),
+                  ),
+                ),
+              ),
+            ),
           ),
-          onPressed: () {
-            ThemeModeNotifier.set(
-              ThemeModeNotifier.current == ThemeMode.light ? ThemeMode.dark : ThemeMode.light,
-            );
-          },
-          tooltip: ThemeModeNotifier.current == ThemeMode.light ? AppStrings.t('dark_mode', locale) : AppStrings.t('light_mode', locale),
         ),
         title: Text(
           _currentTabIndex == 0 ? AppStrings.t('tab_home', locale) : _currentTabIndex == 1 ? AppStrings.t('tab_table', locale) : AppStrings.t('tab_details', locale),
           style: const TextStyle(color: _heroTextPrimary, fontSize: 17),
         ),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: Center(
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () => context.push('/subscriptions'),
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: _heroTextPrimary.withValues(alpha: 0.6), width: 1),
-                    ),
-                    child: Text(
-                      tier == SubscriptionTier.basic ? AppStrings.t('tier_basic', locale) : AppStrings.t('tier_pro', locale),
-                      style: const TextStyle(color: _heroTextPrimary, fontSize: 13, fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
           IconButton(
-            icon: const Icon(Icons.settings, color: _heroTextPrimary),
+            icon: const Icon(LucideIcons.settings, color: _heroTextPrimary),
             onPressed: () => context.push('/credentials'),
             tooltip: AppStrings.t('settings_tooltip', locale),
           ),
@@ -466,19 +477,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 return;
               }
               setState(() => _currentTabIndex = i);
-              final page = i == 0 ? 0 : i == 1 ? 1 : 2 + _detailsMetricIndex;
-              _mainPageController.animateToPage(page, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+              final targetPage = i == 0 ? 0 : i == 1 ? 1 : 2 + _detailsMetricIndex;
+              final currentPage = _mainPageController.hasClients
+                  ? _mainPageController.page?.round() ?? targetPage
+                  : targetPage;
+              final distance = (targetPage - currentPage).abs();
+              if (distance > 1) {
+                _mainPageController.jumpToPage(targetPage);
+              } else {
+                _mainPageController.animateToPage(
+                  targetPage,
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeInOut,
+                );
+              }
             },
             destinations: [
-              NavigationDestination(icon: const Icon(Icons.home_outlined), selectedIcon: const Icon(Icons.home), label: AppStrings.t('tab_home', locale)),
+              NavigationDestination(icon: const Icon(LucideIcons.home), selectedIcon: const Icon(LucideIcons.home), label: AppStrings.t('tab_home', locale)),
               NavigationDestination(
-                icon: _navIconWithLock(Icons.table_chart_outlined, tier.hasTable),
-                selectedIcon: _navIconWithLock(Icons.table_chart, tier.hasTable),
+                icon: _navIconWithLock(LucideIcons.layoutList, tier.hasTable),
+                selectedIcon: _navIconWithLock(LucideIcons.layoutList, tier.hasTable),
                 label: AppStrings.t('tab_table', locale),
               ),
               NavigationDestination(
-                icon: _navIconWithLock(Icons.bar_chart_outlined, tier.hasDetails),
-                selectedIcon: _navIconWithLock(Icons.bar_chart, tier.hasDetails),
+                icon: _navIconWithLock(LucideIcons.barChart2, tier.hasDetails),
+                selectedIcon: _navIconWithLock(LucideIcons.barChart2, tier.hasDetails),
                 label: AppStrings.t('tab_details', locale),
               ),
               NavigationDestination(icon: const Icon(Icons.workspace_premium_outlined), selectedIcon: const Icon(Icons.workspace_premium), label: AppStrings.t('tab_subscriptions', locale)),
@@ -577,7 +600,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       clipBehavior: Clip.none,
       children: [
         Icon(icon),
-        Positioned(right: -2, top: -2, child: Icon(Icons.lock, size: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        Positioned(right: -2, top: -2, child: Icon(LucideIcons.lock, size: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ],
     );
   }
@@ -599,9 +622,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
               _buildFiltersSection(),
               SizedBox(height: padding),
             ],
-            _buildMainHeroCard(locale),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              child: _buildMainHeroCard(locale),
+            ),
             SizedBox(height: padding),
-            ..._buildSecondaryCardsList(locale),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              child: Column(
+                key: ValueKey(_metricIds.join(',')),
+                children: _buildSecondaryCardsList(locale),
+              ),
+            ),
+            if (_selectedNetworks.length >= 2 && _statsByNetwork.isNotEmpty) ...[
+              SizedBox(height: padding),
+              _buildAdSourcePieChart(locale),
+            ],
             if (SubscriptionNotifier.current == SubscriptionTier.basic) ...[
               SizedBox(height: padding),
               _buildCollapsibleSection(
@@ -617,54 +657,490 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  static const Map<String, Color> _metricColors = {
+    'revenue': Color(0xFF60A5FA),
+    'impressions': Color(0xFFA78BFA),
+    'ecpm': Color(0xFF34D399),
+    'clicks': Color(0xFFF472B6),
+  };
+
   List<Widget> _buildSecondaryCardsList(String locale) {
     final s = _stats!;
     final l = LocaleNotifier.current;
-    final items = <Widget>[];
-    if (_metricIds.contains('revenue')) items.add(_buildSecondaryCardRow(AppStrings.t('revenue', l), formatMoney(s.revenue), Icons.monetization_on_outlined, 'revenue', 0));
-    if (_metricIds.contains('impressions')) items.add(_buildSecondaryCardRow(AppStrings.t('impressions', l), formatNumber(s.impressions), Icons.visibility, 'impressions', 0));
-    if (_metricIds.contains('ecpm')) items.add(_buildSecondaryCardRow(AppStrings.t('ecpm', l), formatMoney(s.ecpm), Icons.trending_up, 'ecpm', 0));
-    if (_metricIds.contains('clicks')) items.add(_buildSecondaryCardRow(AppStrings.t('clicks', l), formatNumber(s.clicks ?? 0), Icons.touch_app, 'clicks', 0));
-    if (_metricIds.contains('completions')) items.add(_buildSecondaryCardRow(AppStrings.t('completions', l), formatNumber(s.completions ?? 0), Icons.check_circle, 'completions', 0));
-    if (_metricIds.contains('fill_rate')) items.add(_buildSecondaryCardRow(AppStrings.t('fill_rate', l), s.fillRate != null ? '${formatDecimal(s.fillRate!)}%' : '-', Icons.pie_chart_outline, 'fill_rate', 0));
-    if (_metricIds.contains('completion_rate')) items.add(_buildSecondaryCardRow(AppStrings.t('completion_rate', l), s.completionRate != null ? '${formatDecimal(s.completionRate!)}%' : '-', Icons.done_all, 'completion_rate', 0));
-    if (_metricIds.contains('revenue_per_completion')) items.add(_buildSecondaryCardRow(AppStrings.t('revenue_per_completion', l), s.revenuePerCompletion != null ? formatMoney(s.revenuePerCompletion!) : '-', Icons.monetization_on_outlined, 'revenue_per_completion', 0));
-    if (_metricIds.contains('ctr')) items.add(_buildSecondaryCardRow(AppStrings.t('ctr', l), s.ctr != null ? '${formatDecimal(s.ctr!)}%' : '-', Icons.ads_click, 'ctr', 0));
-    if (_metricIds.contains('app_requests')) items.add(_buildSecondaryCardRow(AppStrings.t('app_requests', l), formatNumber(s.appRequests ?? 0), Icons.sync, 'app_requests', 0));
-    if (_metricIds.contains('dau')) items.add(_buildSecondaryCardRow(AppStrings.t('dau', l), formatNumber(s.dau ?? 0), Icons.people, 'dau', 0));
-    if (_metricIds.contains('sessions')) items.add(_buildSecondaryCardRow(AppStrings.t('sessions', l), formatNumber(s.sessions ?? 0), Icons.event_note, 'sessions', 0));
-    return items;
+    final primaryMetrics = [
+      if (_metricIds.contains('revenue')) ('revenue', AppStrings.t('revenue', l), formatMoney(s.revenue)),
+      if (_metricIds.contains('impressions')) ('impressions', AppStrings.t('impressions', l), formatNumber(s.impressions)),
+      if (_metricIds.contains('ecpm')) ('ecpm', AppStrings.t('ecpm', l), formatMoney(s.ecpm)),
+      if (_metricIds.contains('clicks')) ('clicks', AppStrings.t('clicks', l), formatNumber(s.clicks ?? 0)),
+    ];
+    final gridItems = primaryMetrics.take(4).map((m) => _buildMetricCard(m.$1, m.$2, m.$3)).toList();
+    if (gridItems.isEmpty) return [];
+    final rest = <Widget>[];
+    if (_metricIds.contains('completions')) rest.add(_buildSecondaryCardRow(AppStrings.t('completions', l), formatNumber(s.completions ?? 0), 'completions'));
+    if (_metricIds.contains('fill_rate')) rest.add(_buildSecondaryCardRow(AppStrings.t('fill_rate', l), s.fillRate != null ? '${formatDecimal(s.fillRate!)}%' : '-', 'fill_rate'));
+    if (_metricIds.contains('completion_rate')) rest.add(_buildSecondaryCardRow(AppStrings.t('completion_rate', l), s.completionRate != null ? '${formatDecimal(s.completionRate!)}%' : '-', 'completion_rate'));
+    if (_metricIds.contains('revenue_per_completion')) rest.add(_buildSecondaryCardRow(AppStrings.t('revenue_per_completion', l), s.revenuePerCompletion != null ? formatMoney(s.revenuePerCompletion!) : '-', 'revenue_per_completion'));
+    if (_metricIds.contains('ctr')) rest.add(_buildSecondaryCardRow(AppStrings.t('ctr', l), s.ctr != null ? '${formatDecimal(s.ctr!)}%' : '-', 'ctr'));
+    if (_metricIds.contains('app_requests')) rest.add(_buildSecondaryCardRow(AppStrings.t('app_requests', l), formatNumber(s.appRequests ?? 0), 'app_requests'));
+    if (_metricIds.contains('dau')) rest.add(_buildSecondaryCardRow(AppStrings.t('dau', l), formatNumber(s.dau ?? 0), 'dau'));
+    if (_metricIds.contains('sessions')) rest.add(_buildSecondaryCardRow(AppStrings.t('sessions', l), formatNumber(s.sessions ?? 0), 'sessions'));
+    final width = MediaQuery.of(context).size.width;
+    final isNarrow = width < 420;
+    const crossAxisCount = 2;
+    final aspectRatio = isNarrow ? 1.95 : 2.15;
+    return [
+      if (gridItems.isNotEmpty)
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: crossAxisCount,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: aspectRatio,
+          children: gridItems,
+        ),
+      if (rest.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        _buildCollapsibleSection(
+          title: AppStrings.t('more_metrics', l),
+          expanded: _moreMetricsExpanded,
+          onToggle: () => setState(() => _moreMetricsExpanded = !_moreMetricsExpanded),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: rest,
+          ),
+        ),
+      ],
+    ];
   }
 
-  Widget _buildSecondaryCardRow(String title, String value, IconData icon, String metricId, int _) {
+  List<double> _sparklineValuesForMetric(String metricId) {
+    final byDate = <String, Map<String, num>>{};
+    for (final row in _rawRows) {
+      final date = row.date ?? '';
+      if (date.isEmpty) continue;
+      if (!byDate.containsKey(date)) {
+        byDate[date] = {'rev': 0.0, 'imp': 0, 'clicks': 0, 'comp': 0, 'fr': 0.0, 'frN': 0, 'cr': 0.0, 'crN': 0, 'ctr': 0.0, 'ctrN': 0, 'rpc': 0.0, 'rpcN': 0};
+      }
+      final acc = byDate[date]!;
+      for (final d in row.data ?? []) {
+        final rev = _rev(d);
+        final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
+        acc['rev'] = (acc['rev'] as num) + rev;
+        acc['imp'] = (acc['imp'] as num) + imp;
+        acc['clicks'] = (acc['clicks'] as num) + ((d['clicks'] is num) ? (d['clicks'] as num).toInt() : 0);
+        acc['comp'] = (acc['comp'] as num) + ((d['completions'] is num) ? (d['completions'] as num).toInt() : 0);
+        final fr = (d['appFillRate'] is num) ? (d['appFillRate'] as num).toDouble() : 0.0;
+        if (fr > 0) { acc['fr'] = (acc['fr'] as num) + fr; acc['frN'] = (acc['frN'] as num) + 1; }
+        final cr = (d['completionRate'] is num) ? (d['completionRate'] as num).toDouble() : 0.0;
+        if (cr > 0) { acc['cr'] = (acc['cr'] as num) + cr; acc['crN'] = (acc['crN'] as num) + 1; }
+        final ctr = (d['clickThroughRate'] is num) ? (d['clickThroughRate'] as num).toDouble() : 0.0;
+        if (ctr > 0) { acc['ctr'] = (acc['ctr'] as num) + ctr; acc['ctrN'] = (acc['ctrN'] as num) + 1; }
+        final rpc = (d['revenuePerCompletion'] is num) ? (d['revenuePerCompletion'] as num).toDouble() : 0.0;
+        if (rpc > 0) { acc['rpc'] = (acc['rpc'] as num) + rpc; acc['rpcN'] = (acc['rpcN'] as num) + 1; }
+      }
+    }
+    final sorted = byDate.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+    return sorted.map((e) {
+      final d = e.value;
+      switch (metricId) {
+        case 'revenue': return (d['rev'] as num).toDouble();
+        case 'impressions': return (d['imp'] as num).toDouble();
+        case 'ecpm':
+          final imp = d['imp'] as num;
+          return imp > 0 ? ((d['rev'] as num) / imp * 1000) : 0.0;
+        case 'clicks': return (d['clicks'] as num).toDouble();
+        default: return (d['rev'] as num).toDouble();
+      }
+    }).toList();
+  }
+
+  Widget _buildMetricCard(String metricId, String label, String value) {
+    final color = _metricColors[metricId] ?? Theme.of(context).colorScheme.primary;
+    final prev = _displayPrevStats ?? _prevStats;
+    double? pct;
+    if (prev != null && !_loading) {
+      final s = _stats!;
+      if (metricId == 'revenue' && prev.revenue > 0) pct = ((s.revenue - prev.revenue) / prev.revenue) * 100;
+      if (metricId == 'impressions' && prev.impressions > 0) pct = ((s.impressions - prev.impressions) / prev.impressions) * 100;
+      if (metricId == 'ecpm' && prev.ecpm > 0) pct = ((s.ecpm - prev.ecpm) / prev.ecpm) * 100;
+      if (metricId == 'clicks' && (prev.clicks ?? 0) > 0) pct = (((s.clicks ?? 0) - (prev.clicks ?? 0)) / (prev.clicks ?? 1)) * 100;
+    }
+    final sparkValues = _sparklineValuesForMetric(metricId);
+    final w = MediaQuery.of(context).size.width;
+    final compact = w < 420;
+    final padH = compact ? 10.0 : 14.0;
+    final padV = compact ? 8.0 : 12.0;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _goToDetailTab(metricId),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: Theme.of(context).colorScheme.surface,
+            border: Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              SizedBox(height: compact ? 2 : 4),
+              Text(
+                value,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  fontSize: compact ? 15 : 17,
+                  letterSpacing: -0.5,
+                  color: color,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              SizedBox(height: compact ? 4 : 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (pct != null)
+                    Text(
+                      '${pct >= 0 ? '+' : ''}${pct.toStringAsFixed(1)}%',
+                      style: TextStyle(
+                        fontSize: compact ? 10 : 11,
+                        fontWeight: FontWeight.w700,
+                        color: pct >= 0 ? _accentGreen : _accentRed,
+                      ),
+                    ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: SizedBox(
+                        height: compact ? 18 : 22,
+                        child: sparkValues.length >= 2
+                            ? _SparklinePreview(values: sparkValues, color: color)
+                            : const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSecondaryCardRow(String title, String value, String metricId) {
+    final color = _metricColors[metricId] ?? Theme.of(context).colorScheme.primary;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: () => _goToDetailTab(metricId),
           borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Theme.of(context).colorScheme.surface,
+              border: Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)),
+            ),
             child: Row(
               children: [
-                Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(title, style: Theme.of(context).textTheme.labelMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                      Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                      Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: color)),
                     ],
                   ),
                 ),
-                Icon(Icons.arrow_forward_ios, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                Icon(LucideIcons.chevronRight, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  double _adSourceMetricValue(DashboardStats st) {
+    return _adSourceMetric == 'impressions' ? st.impressions.toDouble() : st.revenue;
+  }
+
+  String _adSourceMetricFormatted(DashboardStats st) {
+    return _adSourceMetric == 'impressions' ? formatNumber(st.impressions) : formatMoney(st.revenue);
+  }
+
+  String _adSourceMetricLabel(String locale) {
+    return _adSourceMetric == 'impressions' ? AppStrings.t('impressions', locale) : AppStrings.t('revenue', locale);
+  }
+
+  String _adSourceOfTotalLabel(String locale) {
+    return _adSourceMetric == 'impressions' ? AppStrings.t('of_total_impressions', locale) : AppStrings.t('of_total_revenue', locale);
+  }
+
+  Widget _buildAdSourcePieChart(String locale) {
+    final l = LocaleNotifier.current;
+    final width = MediaQuery.of(context).size.width;
+    const order = ['ironSource', 'applovin', 'admob'];
+    final perNetworkAll = order
+        .where((id) => _statsByNetwork.containsKey(id))
+        .map((id) {
+          final st = _statsByNetwork[id]!;
+          final value = _adSourceMetricValue(st);
+          final colors = _networkGradients[id];
+          final color = colors?.first ?? Theme.of(context).colorScheme.primary;
+          return (id: id, stats: st, value: value, color: color);
+        })
+        .toList();
+    final total = perNetworkAll.fold<double>(0, (s, e) => s + e.value);
+    if (perNetworkAll.isEmpty) return const SizedBox.shrink();
+    final perNetworkForChart = perNetworkAll.where((e) => e.value > 0).toList();
+
+    final detailId = (_adSourceDetailNetworkId != null && perNetworkAll.any((e) => e.id == _adSourceDetailNetworkId))
+        ? _adSourceDetailNetworkId!
+        : perNetworkAll.first.id;
+    if (_adSourceDetailNetworkId != detailId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _adSourceDetailNetworkId = detailId);
+      });
+    }
+
+    String networkLabel(String id) {
+      switch (id) {
+        case 'ironSource': return AppStrings.t('ironsource_section', l);
+        case 'applovin': return 'AppLovin MAX';
+        case 'admob': return AppStrings.t('admob_label', l);
+        default: return id;
+      }
+    }
+
+    final chartSize = width < 400 ? 88.0 : (width < 500 ? 100.0 : 112.0);
+    final radius = (chartSize / 2) - 2;
+    final sections = perNetworkForChart
+        .map(
+          (e) => PieChartSectionData(
+            value: e.value,
+            title: '',
+            color: e.color,
+            radius: radius,
+            badgePositionPercentageOffset: 0,
+          ),
+        )
+        .toList();
+
+    final detailEntry = perNetworkAll.firstWhere((e) => e.id == detailId);
+    final detailPct = total > 0 ? (detailEntry.value / total) * 100 : 0.0;
+    final cs = Theme.of(context).colorScheme;
+    final gradient = _networkGradients[detailId];
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: cs.surface,
+        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            AppStrings.t('ad_networks', l).toUpperCase(),
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: cs.onSurface,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: ['revenue', 'impressions'].map((m) {
+              final selected = _adSourceMetric == m;
+              final label = m == 'revenue' ? AppStrings.t('revenue', l) : AppStrings.t('impressions', l);
+              return ChoiceChip(
+                label: Text(label, style: TextStyle(fontSize: 11, fontWeight: selected ? FontWeight.w600 : FontWeight.w500)),
+                selected: selected,
+                onSelected: (_) => setState(() => _adSourceMetric = m),
+                showCheckmark: false,
+                labelPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                backgroundColor: cs.surfaceContainerHighest,
+                selectedColor: cs.primary.withValues(alpha: 0.2),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: chartSize + 8,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                ClipOval(
+                  child: SizedBox(
+                    width: chartSize,
+                    height: chartSize,
+                    child: perNetworkForChart.isEmpty
+                    ? Center(
+                        child: Icon(LucideIcons.pieChart, size: chartSize * 0.4, color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+                      )
+                    : PieChart(
+                        PieChartData(
+                          sections: sections,
+                          sectionsSpace: 1,
+                          centerSpaceRadius: 0,
+                        ),
+                      ),
+                  ),
+                ),
+                const SizedBox(width: 28),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: perNetworkAll.map((e) {
+                    final pct = total > 0 ? (e.value / total) * 100 : 0.0;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: e.color,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            networkLabel(e.id),
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${pct.toStringAsFixed(0)}%',
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+          const SizedBox(height: 10),
+          Row(
+            children: perNetworkAll.map((e) {
+              final selected = e.id == detailId;
+              final grad = _networkGradients[e.id];
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => setState(() => _adSourceDetailNetworkId = e.id),
+                      borderRadius: BorderRadius.circular(8),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          gradient: selected && grad != null
+                              ? LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: grad)
+                              : null,
+                          color: selected && grad == null ? cs.primaryContainer : cs.surfaceContainerHighest,
+                        ),
+                        child: Center(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              e.id == 'applovin' ? 'AppLovin' : networkLabel(e.id),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: selected ? Colors.white : cs.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+              border: Border.all(color: cs.outline.withValues(alpha: 0.15)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _adSourceMetricLabel(l),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                    ),
+                    Text(
+                      _adSourceMetricFormatted(detailEntry.stats),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: detailEntry.color),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: (detailPct / 100).clamp(0.0, 1.0),
+                    minHeight: 6,
+                    backgroundColor: cs.surface,
+                    valueColor: AlwaysStoppedAnimation<Color>(gradient?.first ?? detailEntry.color),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${detailPct.toStringAsFixed(0)}% ${_adSourceOfTotalLabel(l)}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -704,17 +1180,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final l = LocaleNotifier.current;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final gap = 6.0;
-        final chipWidth = (constraints.maxWidth - 2 * gap) / 3;
+        const gap = 6.0;
         return SizedBox(
           height: _networkChipHeight,
           child: Row(
             children: [
-              SizedBox(width: chipWidth, child: Center(child: _buildNetworkChip('ironSource', AppStrings.t('ironsource_section', l), _hasIronSource))),
+              Expanded(child: Center(child: _buildNetworkChip('ironSource', AppStrings.t('ironsource_section', l), _hasIronSource))),
               SizedBox(width: gap),
-              SizedBox(width: chipWidth, child: Center(child: _buildNetworkChip('applovin', AppStrings.t('applovin_section', l), _hasAppLovin))),
+              Expanded(child: Center(child: _buildNetworkChip('applovin', AppStrings.t('applovin_section', l), _hasAppLovin))),
               SizedBox(width: gap),
-              SizedBox(width: chipWidth, child: Center(child: _buildNetworkChip('admob', AppStrings.t('admob_label', l), _hasAdMob))),
+              Expanded(child: Center(child: _buildNetworkChip('admob', AppStrings.t('admob_label', l), _hasAdMob))),
             ],
           ),
         );
@@ -727,44 +1202,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final enabled = hasKey;
     final cs = Theme.of(context).colorScheme;
     final section = id == 'ironSource' ? 'ironsource' : id.toLowerCase();
-    final chip = FilterChip(
-      label: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(
-          label,
-          style: const TextStyle(fontSize: 12),
-          maxLines: 1,
+    final gradient = _networkGradients[id];
+    final chip = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: enabled
+            ? () {
+                final next = selected ? _selectedNetworks.where((x) => x != id).toSet() : {..._selectedNetworks, id};
+                if (next.isEmpty) return;
+                setState(() {
+                  _selectedNetworks = next;
+                  _metricIds = AvailableMetrics.forSelectedNetworks(_selectedNetworks);
+                  if (_detailsMetricIndex >= _metricIds.length) _detailsMetricIndex = 0;
+                  _cachedRawRows = [];
+                  _cachedTableRawRows = [];
+                  _tableRawRows = [];
+                  _cachedStartDate = null;
+                  _cachedEndDate = null;
+                  _cachedStatsByNetwork = {};
+                });
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _load();
+                });
+              }
+            : null,
+        borderRadius: BorderRadius.circular(10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: double.infinity,
+          height: _networkChipHeight,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            gradient: selected && gradient != null
+                ? LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: gradient)
+                : null,
+            color: selected && gradient == null ? cs.primaryContainer : (enabled ? cs.surfaceContainerHighest : cs.surfaceContainerHighest.withValues(alpha: 0.6)),
+            boxShadow: selected && gradient != null
+                ? [BoxShadow(color: gradient.first.withOpacity(0.4), blurRadius: 12, offset: const Offset(0, 4))]
+                : null,
+          ),
+          child: Center(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                id == 'applovin' ? 'AppLovin' : label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : cs.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
         ),
       ),
-      selected: selected,
-      onSelected: enabled
-          ? (v) {
-              final next = v
-                  ? {..._selectedNetworks, id}
-                  : _selectedNetworks.where((x) => x != id).toSet();
-              if (next.isEmpty) return;
-              setState(() {
-                _selectedNetworks = next;
-                _metricIds = AvailableMetrics.forSelectedNetworks(_selectedNetworks);
-                if (_detailsMetricIndex >= _metricIds.length) _detailsMetricIndex = 0;
-                _cachedRawRows = [];
-                _cachedTableRawRows = [];
-                _tableRawRows = [];
-                _cachedStartDate = null;
-                _cachedEndDate = null;
-              });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _load();
-              });
-            }
-          : null,
-      selectedColor: enabled ? cs.primaryContainer : null,
-      showCheckmark: false,
-      backgroundColor: enabled ? null : cs.surfaceContainerHighest.withValues(alpha: 0.6),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      side: BorderSide(color: cs.outline.withValues(alpha: 0.3)),
     );
     if (enabled) return chip;
     return GestureDetector(
@@ -817,9 +1309,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required VoidCallback onToggle,
     required Widget child,
   }) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: cs.surface,
+        border: Border.all(color: cs.outline.withValues(alpha: 0.2)),
+      ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -830,7 +1326,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: InkWell(
               onTap: onToggle,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 child: Row(
                   children: [
                     Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
@@ -838,7 +1334,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     AnimatedRotation(
                       turns: expanded ? 0.5 : 0,
                       duration: const Duration(milliseconds: 200),
-                      child: Icon(Icons.expand_more, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      child: Icon(LucideIcons.chevronDown, color: Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -848,7 +1344,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           AnimatedCrossFade(
             firstChild: const SizedBox.shrink(),
             secondChild: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
               child: child,
             ),
             crossFadeState: expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
@@ -1120,16 +1616,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
           SizedBox(width: compact ? 4 : 8),
           _presetChip(AppStrings.t('preset_90d', LocaleNotifier.current), DateRangePreset.last90, compact),
           SizedBox(width: compact ? 4 : 8),
-          FilterChip(
-            label: Text(compact ? AppStrings.t('filter_date', LocaleNotifier.current) : AppStrings.t('filter_custom', LocaleNotifier.current)),
-            selected: _filters.datePreset == DateRangePreset.custom,
-            onSelected: (_) => _pickDateRange(),
-            avatar: Icon(Icons.calendar_today, size: compact ? 14 : 18),
-            selectedColor: Theme.of(context).colorScheme.primaryContainer,
-            checkmarkColor: Theme.of(context).colorScheme.primary,
-            showCheckmark: true,
-            padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12, vertical: compact ? 4 : 8),
-            visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _pickDateRange,
+              borderRadius: BorderRadius.circular(20),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 14, vertical: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  gradient: _filters.datePreset == DateRangePreset.custom
+                      ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF1D4ED8), Color(0xFF7C3AED)])
+                      : null,
+                  color: _filters.datePreset == DateRangePreset.custom ? null : Theme.of(context).colorScheme.surfaceContainerHighest,
+                  boxShadow: _filters.datePreset == DateRangePreset.custom ? [BoxShadow(color: const Color(0xFF1D4ED8).withOpacity(0.25), blurRadius: 12, offset: const Offset(0, 4))] : null,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.calendar, size: 14, color: _filters.datePreset == DateRangePreset.custom ? Colors.white : Theme.of(context).colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 6),
+                    Text(
+                      compact ? AppStrings.t('filter_date', LocaleNotifier.current) : AppStrings.t('filter_custom', LocaleNotifier.current),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _filters.datePreset == DateRangePreset.custom ? Colors.white : Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -1138,15 +1653,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _presetChip(String label, DateRangePreset preset, bool compact) {
     final selected = _filters.datePreset == preset;
-    return FilterChip(
-      label: Text(label, style: TextStyle(fontSize: compact ? 12 : null)),
-      selected: selected,
-      onSelected: (_) => _applyPreset(preset),
-      selectedColor: Theme.of(context).colorScheme.primaryContainer,
-      checkmarkColor: Theme.of(context).colorScheme.primary,
-      showCheckmark: true,
-      padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12, vertical: compact ? 4 : 8),
-      visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _applyPreset(preset),
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 14, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: selected
+                ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF1D4ED8), Color(0xFF7C3AED)])
+                : null,
+            color: selected ? null : Theme.of(context).colorScheme.surfaceContainerHighest,
+            boxShadow: selected ? [BoxShadow(color: const Color(0xFF1D4ED8).withOpacity(0.25), blurRadius: 12, offset: const Offset(0, 4))] : null,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1187,10 +1719,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  static const Color _heroBlueStart = Color(0xFF0D47A1);
-  static const Color _heroBlueEnd = Color(0xFF1565C0);
+  static const Color _heroBlueStart = Color(0xFF0F2460);
+  static const Color _heroBlueEnd = Color(0xFF1A1060);
   static const Color _heroTextPrimary = Color(0xFFFFFFFF);
-  static const Color _heroTextMuted = Color(0xFFBBDEFB);
+  static const Color _heroTextMuted = Color(0xFF93C5FD);
+  static const Color _accentGreen = Color(0xFF22C55E);
+  static const Color _accentRed = Color(0xFFF97373);
+
+  static const Map<String, List<Color>> _networkGradients = {
+    'ironSource': [Color(0xFFFF6B35), Color(0xFFFF3D00)],
+    'applovin': [Color(0xFF00C6FF), Color(0xFF0072FF)],
+    'admob': [Color(0xFF34D399), Color(0xFF059669)],
+  };
 
   Widget _buildMainHeroCard(String locale) {
     final s = (_displayStats ?? _stats)!;
@@ -1198,92 +1738,69 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _displayDatePreset != DateRangePreset.custom &&
         (_displayPrevStats ?? _prevStats) != null;
     double? revPct;
-    double? impPct;
-    double? ecpmPct;
     final prev = _displayPrevStats ?? _prevStats;
-    if (showCompare && prev != null) {
-      if (prev.revenue > 0) {
-        revPct = ((s.revenue - prev.revenue) / prev.revenue) * 100;
-      }
-      if (prev.impressions > 0) {
-        impPct = ((s.impressions - prev.impressions) / prev.impressions) * 100;
-      }
-      if (prev.ecpm > 0) {
-        ecpmPct = ((s.ecpm - prev.ecpm) / prev.ecpm) * 100;
-      }
+    if (showCompare && prev != null && prev.revenue > 0) {
+      revPct = ((s.revenue - prev.revenue) / prev.revenue) * 100;
     }
     final prevLabel = _prevPeriodLabel(locale);
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [_heroBlueStart, _heroBlueEnd],
-          ),
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_heroBlueStart, _heroBlueEnd],
         ),
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
-        child: Column(
+        border: Border.all(color: const Color(0xFF1D4ED8).withOpacity(0.25), width: 1),
+        boxShadow: [
+          BoxShadow(color: const Color(0xFF1D4ED8).withOpacity(0.2), blurRadius: 16, offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              AppStrings.t('revenue', locale),
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                color: _heroTextMuted,
-              ),
+              'TOTAL REVENUE',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 0.5, color: _heroTextMuted),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 6),
             Text(
               formatMoney(s.revenue),
               style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                fontWeight: FontWeight.bold,
+                fontSize: 32,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -1,
+                height: 1,
                 color: _heroTextPrimary,
               ),
             ),
             if (revPct != null && prevLabel.isNotEmpty) ...[
               const SizedBox(height: 6),
-              Text(
-                '${revPct >= 0 ? '+' : ''}${revPct.toStringAsFixed(1)}% $prevLabel',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: revPct >= 0 ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A),
-                  fontWeight: FontWeight.w500,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: (revPct >= 0 ? _accentGreen : _accentRed).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '${revPct >= 0 ? '↑' : '↓'} ${revPct.abs().toStringAsFixed(1)}% vs $prevLabel',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: revPct >= 0 ? _accentGreen : _accentRed),
                 ),
               ),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text.rich(
-                        TextSpan(
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: _heroTextMuted,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 12,
-                          ),
-                          children: [
-                            TextSpan(text: AppStrings.t('impressions', locale)),
-                            if (impPct != null && prevLabel.isNotEmpty)
-                              TextSpan(
-                                text: ' ${impPct >= 0 ? '+' : ''}${impPct.toStringAsFixed(1)}%',
-                                style: TextStyle(
-                                  color: impPct >= 0 ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A),
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                          ],
-                        ),
+                      Text(
+                        AppStrings.t('impressions', locale),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: _heroTextMuted, fontWeight: FontWeight.w500, fontSize: 11),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -1296,38 +1813,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ],
                   ),
                 ),
+                Container(width: 1, height: 36, margin: const EdgeInsets.symmetric(horizontal: 8), color: const Color(0xFF1E3A8A)),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text.rich(
-                        TextSpan(
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: _heroTextMuted,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 12,
-                          ),
-                          children: [
-                            TextSpan(text: AppStrings.t('ecpm', locale)),
-                            if (ecpmPct != null && prevLabel.isNotEmpty)
-                              TextSpan(
-                                text: ' ${ecpmPct >= 0 ? '+' : ''}${ecpmPct.toStringAsFixed(1)}%',
-                                style: TextStyle(
-                                  color: ecpmPct >= 0 ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A),
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                          ],
-                        ),
+                      Text(
+                        AppStrings.t('ecpm', locale),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: _heroTextMuted, fontWeight: FontWeight.w500, fontSize: 11),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         formatMoney(s.ecpm),
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: _heroTextPrimary,
-                        ),
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700, fontSize: 18, color: _heroTextPrimary),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(width: 1, height: 36, margin: const EdgeInsets.symmetric(horizontal: 8), color: const Color(0xFF1E3A8A)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        AppStrings.t('clicks', locale),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: _heroTextMuted, fontWeight: FontWeight.w500, fontSize: 11),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        formatNumber(s.clicks ?? 0),
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700, fontSize: 18, color: _heroTextPrimary),
                       ),
                     ],
                   ),
@@ -1459,7 +1976,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       mainAxisAlignment: MainAxisAlignment.start,
                       children: [
                         Icon(
-                          Icons.filter_list,
+                          LucideIcons.filter,
                           size: 16,
                           color: cs.primary,
                         ),
@@ -1476,7 +1993,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         AnimatedRotation(
                           turns: _filtersExpanded ? 0.5 : 0,
                           duration: const Duration(milliseconds: 200),
-                          child: Icon(Icons.expand_more, size: 20, color: cs.onSurfaceVariant),
+                          child: Icon(LucideIcons.chevronDown, size: 20, color: cs.onSurfaceVariant),
                         ),
                       ],
                     ),
@@ -1743,7 +2260,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12),
                   ),
                 ),
-                Icon(Icons.arrow_drop_down, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                Icon(LucideIcons.chevronDown, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ],
             ),
           ],
@@ -1934,7 +2451,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   color: _heroBlueStart.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(Icons.table_chart, color: _heroTextPrimary, size: 20),
+                child: Icon(LucideIcons.layoutList, color: _heroTextPrimary, size: 20),
               ),
               const SizedBox(width: 10),
               Text(
@@ -1973,4 +2490,90 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ],
     );
   }
+}
+
+class _SparklinePreview extends StatelessWidget {
+  const _SparklinePreview({required this.values, required this.color});
+
+  final List<double> values;
+  final Color color;
+
+  static const double _inset = 3;
+
+  @override
+  Widget build(BuildContext context) {
+    if (values.length < 2) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (_, c) {
+        final w = c.maxWidth;
+        final h = c.maxHeight;
+        if (w <= _inset * 2 || h <= _inset * 2) return const SizedBox.shrink();
+        return CustomPaint(
+          size: Size(w, h),
+          painter: _SparklinePainter(
+            values: values,
+            color: color,
+            inset: _inset,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  _SparklinePainter({required this.values, required this.color, this.inset = 3});
+
+  final List<double> values;
+  final Color color;
+  final double inset;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final min = values.reduce((a, b) => a < b ? a : b);
+    final max = values.reduce((a, b) => a > b ? a : b);
+    final range = (max - min).clamp(0.01, double.infinity);
+    final w = size.width;
+    final h = size.height;
+    final left = inset;
+    final right = w - inset;
+    final top = inset;
+    final bottom = h - inset;
+    final innerW = (right - left).clamp(1.0, double.infinity);
+    final innerH = (bottom - top).clamp(1.0, double.infinity);
+    final pts = <Offset>[];
+    for (var i = 0; i < values.length; i++) {
+      final t = values.length > 1 ? i / (values.length - 1) : 0.0;
+      final x = left + t * innerW;
+      final yNorm = range > 0 ? (values[i] - min) / range : 0.0;
+      final y = bottom - yNorm * innerH;
+      pts.add(Offset(x.clamp(left, right), y.clamp(top, bottom)));
+    }
+    if (pts.isEmpty) return;
+    final linePaint = Paint()
+      ..color = color
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+    final path = Path()..moveTo(pts.first.dx, pts.first.dy);
+    for (var i = 1; i < pts.length; i++) {
+      path.lineTo(pts[i].dx, pts[i].dy);
+    }
+    canvas.drawPath(path, linePaint);
+    final fillPath = Path.from(path)
+      ..lineTo(pts.last.dx, bottom)
+      ..lineTo(pts.first.dx, bottom)
+      ..close();
+    canvas.drawPath(
+      fillPath,
+      Paint()
+        ..color = color.withValues(alpha: 0.12)
+        ..style = PaintingStyle.fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparklinePainter old) =>
+      !listEquals(values, old.values) || color != old.color;
 }

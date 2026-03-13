@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../core/l10n/app_strings.dart';
 
@@ -36,7 +37,7 @@ final Map<String, GlossaryEntry> glossaryEntries = {
   'revenue': const GlossaryEntry(
     id: 'revenue',
     title: 'Ingresos (Revenue)',
-    icon: Icons.attach_money,
+    icon: LucideIcons.dollarSign,
     description: 'Total de dinero generado por la monetización de anuncios en tu app. '
         'Incluye todos los formatos (rewarded video, intersticial, banner, offerwall) '
         'en el periodo seleccionado. Es el indicador principal de rendimiento económico.',
@@ -44,7 +45,7 @@ final Map<String, GlossaryEntry> glossaryEntries = {
   'impressions': const GlossaryEntry(
     id: 'impressions',
     title: 'Impresiones',
-    icon: Icons.visibility,
+    icon: LucideIcons.eye,
     description: 'Número de veces que se mostró un anuncio a un usuario. '
         'Cada vez que un anuncio aparece en pantalla cuenta como una impresión. '
         'Más impresiones con buen eCPM suelen traducirse en más ingresos.',
@@ -52,14 +53,14 @@ final Map<String, GlossaryEntry> glossaryEntries = {
   'ecpm': const GlossaryEntry(
     id: 'ecpm',
     title: 'eCPM (Effective CPM)',
-    icon: Icons.trending_up,
+    icon: LucideIcons.trendingUp,
     description: 'Ingresos efectivos por cada mil impresiones. Se calcula como: (Ingresos / Impresiones) × 1000. '
         'Indica cuánto estás ganando por mil visualizaciones; sirve para comparar rendimiento entre formatos, apps o periodos.',
   ),
   'clicks': const GlossaryEntry(
     id: 'clicks',
     title: 'Clicks',
-    icon: Icons.touch_app,
+    icon: LucideIcons.mousePointerClick,
     description: 'Número de veces que los usuarios hicieron clic en un anuncio. '
         'Útil para formatos donde el click es parte del funnel (por ejemplo banners). '
         'En rewarded video el indicador más relevante suele ser completions.',
@@ -67,14 +68,14 @@ final Map<String, GlossaryEntry> glossaryEntries = {
   'completions': const GlossaryEntry(
     id: 'completions',
     title: 'Completados',
-    icon: Icons.check_circle,
+    icon: LucideIcons.checkCircle,
     description: 'Cantidad de anuncios que el usuario vio por completo (ej. rewarded video visto hasta el final). '
         'Un completion suele pagar más que una simple impresión. Es clave para optimizar inventario de rewarded.',
   ),
   'fill_rate': const GlossaryEntry(
     id: 'fill_rate',
     title: 'Fill rate',
-    icon: Icons.pie_chart_outline,
+    icon: LucideIcons.pieChart,
     description: 'Porcentaje de solicitudes de anuncio que recibieron un anuncio para mostrarse. '
         'Un fill rate bajo indica que la demanda de anunciantes no cubre tu inventario; '
         'puedes mejorar con más redes o ajustando segmentación.',
@@ -82,21 +83,21 @@ final Map<String, GlossaryEntry> glossaryEntries = {
   'completion_rate': const GlossaryEntry(
     id: 'completion_rate',
     title: 'Completion rate',
-    icon: Icons.done_all,
+    icon: LucideIcons.listChecks,
     description: 'Porcentaje de impresiones que se convirtieron en visualizaciones completas (ej. video visto al 100%). '
         'Mide la calidad del engagement: a mayor completion rate, mejor experiencia y normalmente mejor eCPM.',
   ),
   'revenue_per_completion': const GlossaryEntry(
     id: 'revenue_per_completion',
     title: 'Revenue por completion',
-    icon: Icons.monetization_on_outlined,
+    icon: LucideIcons.dollarSign,
     description: 'Ingresos medios por cada anuncio completado (ej. por cada rewarded video visto hasta el final). '
         'Ayuda a valorar el rendimiento de cada completion y a comparar entre formatos o redes.',
   ),
   'ctr': const GlossaryEntry(
     id: 'ctr',
     title: 'CTR (Click-Through Rate)',
-    icon: Icons.ads_click,
+    icon: LucideIcons.mousePointerClick,
     description: 'Porcentaje de impresiones que generaron un clic. Fórmula: (Clicks / Impresiones) × 100. '
         'Relevante sobre todo en banners e intersticiales donde el clic es un objetivo. '
         'Un CTR alto suele indicar creativos atractivos o buena colocación.',
@@ -104,21 +105,21 @@ final Map<String, GlossaryEntry> glossaryEntries = {
   'app_requests': const GlossaryEntry(
     id: 'app_requests',
     title: 'App requests',
-    icon: Icons.sync,
+    icon: LucideIcons.refreshCw,
     description: 'Número de veces que tu app solicitó un anuncio a la plataforma (LevelPlay/IronSource). '
         'Comparado con impresiones y fill rate, te dice cuántas oportunidades de mostrar anuncios hubo y cuántas se cumplieron.',
   ),
   'dau': const GlossaryEntry(
     id: 'dau',
     title: 'DAU (Daily Active Users)',
-    icon: Icons.people,
+    icon: LucideIcons.users,
     description: 'Usuarios únicos que interactuaron con tu app en un día. '
         'Indica el alcance diario y la base de usuarios activos; útil para comparar con ingresos e impresiones y ver rendimiento por usuario.',
   ),
   'sessions': const GlossaryEntry(
     id: 'sessions',
     title: 'Sesiones',
-    icon: Icons.event_note,
+    icon: LucideIcons.calendarDays,
     description: 'Número de sesiones de uso de la app (aperturas o periodos de uso). '
         'Una sesión suele ser una apertura de la app hasta que el usuario la cierra o pasa a segundo plano. '
         'Ayuda a entender la frecuencia de uso y a relacionar monetización con sesiones.',

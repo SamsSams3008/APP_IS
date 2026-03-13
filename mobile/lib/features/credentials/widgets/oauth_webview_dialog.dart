@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 /// Diálogo con WebView para OAuth. Se cierra cuando [resultFuture] completa.
@@ -68,7 +69,7 @@ class _OAuthWebViewDialogState extends State<OAuthWebViewDialog> {
                     ),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.close),
+                      icon: const Icon(LucideIcons.x),
                       onPressed: _closeWithoutResult,
                     ),
                   ],

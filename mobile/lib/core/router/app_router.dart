@@ -1,8 +1,8 @@
 import 'package:go_router/go_router.dart';
 
 import '../../features/ask_ai/ask_ai_screen.dart';
-import '../../features/credentials/presentation/screens/credentials_screen.dart';
 import '../../features/dashboard/presentation/screens/dashboard_screen.dart';
+import '../../features/welcome/welcome_screen.dart';
 import '../../features/dashboard/presentation/screens/metric_detail_screen.dart';
 import '../../features/splash/splash_screen.dart';
 import '../../features/subscriptions/subscriptions_screen.dart';
@@ -17,11 +17,12 @@ class AppRouter {
           builder: (context, state) => const SplashScreen(),
         ),
         GoRoute(
+          path: '/welcome',
+          builder: (context, state) => const WelcomeScreen(),
+        ),
+        GoRoute(
           path: '/credentials',
-          builder: (context, state) {
-            final section = state.uri.queryParameters['section'];
-            return CredentialsScreen(initialSection: section);
-          },
+          builder: (context, state) => const WelcomeScreen(fromSettings: true),
         ),
         GoRoute(
           path: '/dashboard',

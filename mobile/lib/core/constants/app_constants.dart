@@ -38,6 +38,9 @@ class AppConstants {
   static const String storageMetricFiltersPrefix = 'metric_filters_';
   static const String storageSubscriptionTier = 'subscription_tier';
 
+  /// Flag para reset de credenciales una sola vez (onboarding v2).
+  static const String storageOnboardingV2Reset = 'onboarding_v2_reset';
+
   /// ID del producto de suscripción Pro. Debe coincidir con el creado en App Store Connect (iOS) y Google Play Console (Android).
   static const String iapProProductId = 'adrev_dash_pro';
 }

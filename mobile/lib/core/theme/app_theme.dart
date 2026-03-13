@@ -1,27 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Paleta: tema claro y oscuro en azul navy.
+/// Paleta: azul oscuro navy (#080D1A, #0F172A, #1E293B).
 class AppTheme {
   AppTheme._();
 
-  // --- Tema oscuro
-  static const Color _bg = Color(0xFF0D1117);
-  static const Color _surface = Color(0xFF161B22);
-  static const Color _surfaceVariant = Color(0xFF21262D);
-  static const Color _primary = Color(0xFF388BFD);
-  static const Color _primaryVariant = Color(0xFF58A6FF);
-  static const Color _accent = Color(0xFF79C0FF);
-  static const Color _onBg = Color(0xFFE6EDF3);
-  static const Color _onSurfaceVariant = Color(0xFF8B949E);
+  // --- Tema oscuro (referencia AdPulse)
+  static const Color _bg = Color(0xFF080D1A);
+  static const Color _surface = Color(0xFF0F172A);
+  static const Color _surfaceVariant = Color(0xFF1E293B);
+  static const Color _primary = Color(0xFF1D4ED8);
+  static const Color _primaryVariant = Color(0xFF3B82F6);
+  static const Color _accent = Color(0xFF93C5FD);
+  static const Color _onBg = Color(0xFFE2E8F0);
+  static const Color _onSurfaceVariant = Color(0xFF94A3B8);
   static const Color _error = Color(0xFFF87171);
 
-  // --- Tema claro
-  static const Color _lightBg = Color(0xFFF6F8FA);
-  static const Color _lightSurface = Color(0xFFFFFFFF);
-  static const Color _lightSurfaceVariant = Color(0xFFE8EDF4);
-  static const Color _lightOnBg = Color(0xFF0D1117);
-  static const Color _lightOnSurfaceVariant = Color(0xFF57606A);
+  // --- Tema claro (tonos azul suave)
+  static const Color _lightBg = Color(0xFFE8EEF7);
+  static const Color _lightSurface = Color(0xFFF1F5F9);
+  static const Color _lightSurfaceVariant = Color(0xFFE2E8F0);
+  static const Color _lightOnBg = Color(0xFF0F172A);
+  static const Color _lightOnSurfaceVariant = Color(0xFF64748B);
 
   /// Tema claro: fondos claros, acentos azul navy.
   static ThemeData get light {

@@ -83,6 +83,24 @@ class DashboardRepository {
     );
   }
 
+  /// Revenue por red de anuncios (para gráfico de pastel). Fetch en paralelo.
+  Future<Map<String, DashboardStats>> getStatsByNetwork(
+    DashboardFilters filters, {
+    Set<String>? selectedNetworks,
+  }) async {
+    final providers = await getConfiguredProviders();
+    final sel = selectedNetworks ?? {
+      if (providers.hasIronSource) 'ironSource',
+      if (providers.hasAppLovin) 'applovin',
+      if (providers.hasAdMob) 'admob',
+    };
+    final entries = await Future.wait(sel.map((net) async {
+      final rows = await getStatsRaw(filters, selectedNetworks: {net});
+      return MapEntry(net, statsFromRows(rows));
+    }));
+    return Map.fromEntries(entries.where((e) => e.value.revenue > 0 || e.value.impressions > 0));
+  }
+
   /// Stats del periodo anterior (misma duración, días previos) para comparar %.
   Future<DashboardStats?> getPreviousPeriodStats(
     DashboardFilters filters, {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 
@@ -84,7 +85,7 @@ class _AskAiScreenState extends State<AskAiScreen> {
       return Scaffold(
         appBar: AppBar(
           title: Text(AppStrings.t('ask_ai_title', LocaleNotifier.current)),
-          leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => context.pop()),
+          leading: IconButton(icon: const Icon(LucideIcons.arrowLeft), onPressed: () => context.pop()),
         ),
         body: const Center(
           child: Padding(
@@ -101,7 +102,7 @@ class _AskAiScreenState extends State<AskAiScreen> {
       appBar: AppBar(
         title: const Text('Ask about your data'),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(LucideIcons.arrowLeft),
           onPressed: () => context.pop(),
         ),
       ),
@@ -134,7 +135,7 @@ class _AskAiScreenState extends State<AskAiScreen> {
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _loading ? null : _ask,
-              icon: _loading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send),
+              icon: _loading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(LucideIcons.send),
               label: Text(_loading ? 'Asking...' : 'Ask'),
             ),
             if (_response.isNotEmpty) ...[

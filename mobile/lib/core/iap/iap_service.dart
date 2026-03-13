@@ -35,6 +35,7 @@ class IapService {
       onError: (_) {},
     );
     await loadProducts();
+    await restorePurchases();
     _initialized = true;
   }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../core/l10n/app_strings.dart';
 import '../../core/locale_notifier.dart';
@@ -58,7 +59,7 @@ class ErrorRetryBody extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  isNetworkError ? Icons.wifi_off_rounded : Icons.error_outline_rounded,
+                  isNetworkError ? LucideIcons.wifiOff : LucideIcons.alertCircle,
                   size: 48,
                   color: isNetworkError ? cs.tertiary : cs.error,
                 ),
@@ -76,7 +77,7 @@ class ErrorRetryBody extends StatelessWidget {
               const SizedBox(height: 24),
               FilledButton.icon(
                 onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded, size: 20),
+                icon: const Icon(LucideIcons.refreshCw, size: 20),
                 label: Text(AppStrings.t('retry', LocaleNotifier.current)),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),

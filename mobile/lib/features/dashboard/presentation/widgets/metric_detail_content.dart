@@ -1,5 +1,6 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../core/l10n/app_strings.dart';
 import '../../../../core/locale_notifier.dart';
@@ -118,97 +119,6 @@ class MetricDetailContent extends StatelessWidget {
     }
   }
 
-  List<MapEntry<String, double>> _entriesByDate() {
-    // Para métricas ratio: agregar numerador/denominador por fecha y luego calcular.
-    final byDate = <String, Map<String, num>>{};
-    for (final row in rawRows) {
-      final date = row.date ?? '';
-      if (date.isEmpty) continue;
-      if (!byDate.containsKey(date)) {
-        byDate[date] = {'rev': 0, 'imp': 0, 'clicks': 0, 'comp': 0, 'fr': 0, 'frN': 0, 'cr': 0, 'crN': 0, 'ctr': 0, 'ctrN': 0, 'rpc': 0, 'rpcN': 0, 'appReq': 0, 'dau': 0, 'sess': 0};
-      }
-      final acc = byDate[date]!;
-      for (final d in row.data ?? []) {
-        final rev = _revNum(d['revenue']);
-        final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
-        final clk = (d['clicks'] is num) ? (d['clicks'] as num).toInt() : 0;
-        final comp = (d['completions'] is num) ? (d['completions'] as num).toInt() : 0;
-        acc['rev'] = (acc['rev'] as num) + rev;
-        acc['imp'] = (acc['imp'] as num) + imp;
-        acc['clicks'] = (acc['clicks'] as num) + clk;
-        acc['comp'] = (acc['comp'] as num) + comp;
-        acc['appReq'] = (acc['appReq'] as num) + (d['appRequests'] is num ? (d['appRequests'] as num).toInt() : 0);
-        acc['dau'] = (acc['dau'] as num) + (d['dau'] is num ? (d['dau'] as num).toInt() : 0);
-        acc['sess'] = (acc['sess'] as num) + (d['sessions'] is num ? (d['sessions'] as num).toInt() : 0);
-        final fr = _revNum(d['appFillRate']);
-        if (fr > 0) { acc['fr'] = (acc['fr'] as num) + fr; acc['frN'] = (acc['frN'] as num) + 1; }
-        final cr = _revNum(d['completionRate']);
-        if (cr > 0) { acc['cr'] = (acc['cr'] as num) + cr; acc['crN'] = (acc['crN'] as num) + 1; }
-        final ctr = _revNum(d['clickThroughRate']);
-        if (ctr > 0) { acc['ctr'] = (acc['ctr'] as num) + ctr; acc['ctrN'] = (acc['ctrN'] as num) + 1; }
-        final rpc = _revNum(d['revenuePerCompletion']);
-        if (rpc > 0) { acc['rpc'] = (acc['rpc'] as num) + rpc; acc['rpcN'] = (acc['rpcN'] as num) + 1; }
-      }
-    }
-    final result = <MapEntry<String, double>>[];
-    for (final e in byDate.entries.toList()..sort((a, b) => a.key.compareTo(b.key))) {
-      final d = e.value;
-      double v = 0;
-      switch (metricId) {
-        case 'revenue':
-          v = (d['rev'] as num).toDouble();
-          break;
-        case 'impressions':
-          v = (d['imp'] as num).toDouble();
-          break;
-        case 'ecpm':
-          final imp = d['imp'] as num;
-          v = imp > 0 ? ((d['rev'] as num) / imp * 1000).toDouble() : 0;
-          break;
-        case 'clicks':
-          v = (d['clicks'] as num).toDouble();
-          break;
-        case 'completions':
-          v = (d['comp'] as num).toDouble();
-          break;
-        case 'fill_rate':
-          v = (d['frN'] as num) > 0 ? (d['fr'] as num) / (d['frN'] as num) : 0;
-          break;
-        case 'completion_rate':
-          v = (d['crN'] as num) > 0 ? (d['cr'] as num) / (d['crN'] as num) : ((d['imp'] as num) > 0 && (d['comp'] as num) > 0 ? (d['comp'] as num) / (d['imp'] as num) * 100 : 0).toDouble();
-          break;
-        case 'ctr':
-          v = (d['ctrN'] as num) > 0 ? (d['ctr'] as num) / (d['ctrN'] as num) : ((d['imp'] as num) > 0 && (d['clicks'] as num) > 0 ? (d['clicks'] as num) / (d['imp'] as num) * 100 : 0).toDouble();
-          break;
-        case 'revenue_per_completion':
-          v = (d['rpcN'] as num) > 0 ? (d['rpc'] as num) / (d['rpcN'] as num) : ((d['comp'] as num) > 0 ? (d['rev'] as num) / (d['comp'] as num) : 0).toDouble();
-          break;
-        case 'app_requests':
-          v = (d['appReq'] as num).toDouble();
-          break;
-        case 'dau':
-          v = (d['dau'] as num).toDouble();
-          break;
-        case 'sessions':
-          v = (d['sess'] as num).toDouble();
-          break;
-        default:
-          v = (d['rev'] as num).toDouble();
-      }
-      result.add(MapEntry(e.key, v));
-    }
-    return result;
-  }
-
-  static double _niceIntervalAtLeast(double minInterval) {
-    if (minInterval <= 0) return 1;
-    const candidates = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0];
-    for (final c in candidates) {
-      if (c >= minInterval) return c;
-    }
-    return (minInterval / 50).ceilToDouble() * 50;
-  }
-
   String _formatChartValue(double value) {
     switch (metricId) {
       case 'revenue':
@@ -229,6 +139,71 @@ class MetricDetailContent extends StatelessWidget {
       default:
         return value.toString();
     }
+  }
+
+  List<MapEntry<String, double>> _entriesByDate() {
+    final byDate = <String, Map<String, num>>{};
+    for (final row in rawRows) {
+      final date = row.date ?? '';
+      if (date.isEmpty) continue;
+      if (!byDate.containsKey(date)) {
+        byDate[date] = {'rev': 0, 'imp': 0, 'clicks': 0, 'comp': 0, 'fr': 0, 'frN': 0, 'cr': 0, 'crN': 0, 'ctr': 0, 'ctrN': 0, 'rpc': 0, 'rpcN': 0, 'appReq': 0, 'dau': 0, 'sess': 0};
+      }
+      final acc = byDate[date]!;
+      for (final d in row.data ?? []) {
+        final rev = _revNum(d['revenue']);
+        final imp = (d['impressions'] is num) ? (d['impressions'] as num).toInt() : 0;
+        acc['rev'] = (acc['rev'] as num) + rev;
+        acc['imp'] = (acc['imp'] as num) + imp;
+        acc['clicks'] = (acc['clicks'] as num) + ((d['clicks'] is num) ? (d['clicks'] as num).toInt() : 0);
+        acc['comp'] = (acc['comp'] as num) + ((d['completions'] is num) ? (d['completions'] as num).toInt() : 0);
+        acc['appReq'] = (acc['appReq'] as num) + ((d['appRequests'] is num) ? (d['appRequests'] as num).toInt() : 0);
+        acc['dau'] = (acc['dau'] as num) + ((d['dau'] is num) ? (d['dau'] as num).toInt() : 0);
+        acc['sess'] = (acc['sess'] as num) + ((d['sessions'] is num) ? (d['sessions'] as num).toInt() : 0);
+        final fr = _revNum(d['appFillRate']);
+        if (fr > 0) { acc['fr'] = (acc['fr'] as num) + fr; acc['frN'] = (acc['frN'] as num) + 1; }
+        final cr = _revNum(d['completionRate']);
+        if (cr > 0) { acc['cr'] = (acc['cr'] as num) + cr; acc['crN'] = (acc['crN'] as num) + 1; }
+        final ctr = _revNum(d['clickThroughRate']);
+        if (ctr > 0) { acc['ctr'] = (acc['ctr'] as num) + ctr; acc['ctrN'] = (acc['ctrN'] as num) + 1; }
+        final rpc = _revNum(d['revenuePerCompletion']);
+        if (rpc > 0) { acc['rpc'] = (acc['rpc'] as num) + rpc; acc['rpcN'] = (acc['rpcN'] as num) + 1; }
+      }
+    }
+    final result = <MapEntry<String, double>>[];
+    for (final e in byDate.entries.toList()..sort((a, b) => a.key.compareTo(b.key))) {
+      final d = e.value;
+      double v = 0;
+      switch (metricId) {
+        case 'revenue': v = (d['rev'] as num).toDouble(); break;
+        case 'impressions': v = (d['imp'] as num).toDouble(); break;
+        case 'ecpm':
+          final imp = d['imp'] as num;
+          v = imp > 0 ? ((d['rev'] as num) / imp * 1000) : 0;
+          break;
+        case 'clicks': v = (d['clicks'] as num).toDouble(); break;
+        case 'completions': v = (d['comp'] as num).toDouble(); break;
+        case 'fill_rate': v = (d['frN'] as num) > 0 ? (d['fr'] as num) / (d['frN'] as num) : 0; break;
+        case 'completion_rate': v = (d['crN'] as num) > 0 ? (d['cr'] as num) / (d['crN'] as num) : ((d['imp'] as num) > 0 && (d['comp'] as num) > 0 ? (d['comp'] as num) / (d['imp'] as num) * 100 : 0).toDouble(); break;
+        case 'ctr': v = (d['ctrN'] as num) > 0 ? (d['ctr'] as num) / (d['ctrN'] as num) : ((d['imp'] as num) > 0 && (d['clicks'] as num) > 0 ? (d['clicks'] as num) / (d['imp'] as num) * 100 : 0).toDouble(); break;
+        case 'revenue_per_completion': v = (d['rpcN'] as num) > 0 ? (d['rpc'] as num) / (d['rpcN'] as num) : ((d['comp'] as num) > 0 ? (d['rev'] as num) / (d['comp'] as num) : 0).toDouble(); break;
+        case 'app_requests': v = (d['appReq'] as num).toDouble(); break;
+        case 'dau': v = (d['dau'] as num).toDouble(); break;
+        case 'sessions': v = (d['sess'] as num).toDouble(); break;
+        default: v = (d['rev'] as num).toDouble();
+      }
+      result.add(MapEntry(e.key, v));
+    }
+    return result;
+  }
+
+  static double _niceIntervalAtLeast(double minInterval) {
+    if (minInterval <= 0) return 1;
+    const candidates = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0];
+    for (final c in candidates) {
+      if (c >= minInterval) return c;
+    }
+    return (minInterval / 50).ceilToDouble() * 50;
   }
 
   String _metricPrevPeriodLabel(String locale) {
@@ -264,10 +239,10 @@ class MetricDetailContent extends StatelessWidget {
     }
     final prevLabel = _metricPrevPeriodLabel(locale);
 
-    const heroBlueStart = Color(0xFF0D47A1);
-    const heroBlueEnd = Color(0xFF1565C0);
+    const heroBlueStart = Color(0xFF0F2460);
+    const heroBlueEnd = Color(0xFF1A1060);
     const heroTextPrimary = Color(0xFFFFFFFF);
-    const heroTextMuted = Color(0xFFBBDEFB);
+    const heroTextMuted = Color(0xFF93C5FD);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -286,25 +261,18 @@ class MetricDetailContent extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 4),
-              Icon(Icons.swipe_left, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              Icon(LucideIcons.chevronLeft, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ],
           ),
           const SizedBox(height: 6),
           // Hero card: valor + % de crecimiento (mismo azul que la principal)
-          Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            clipBehavior: Clip.antiAlias,
-            child: Container(
-              decoration: const BoxDecoration(
-                borderRadius: BorderRadius.all(Radius.circular(16)),
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [heroBlueStart, heroBlueEnd],
-                ),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [heroBlueStart, heroBlueEnd]),
+              border: Border.all(color: const Color(0xFF1D4ED8).withValues(alpha: 0.25)),
+            ),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -326,22 +294,23 @@ class MetricDetailContent extends StatelessWidget {
                   ),
                   if (pct != null && prevLabel.isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Text(
-                      '${pct >= 0 ? '+' : ''}${pct.toStringAsFixed(1)}% $prevLabel',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: pct >= 0 ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A),
-                        fontWeight: FontWeight.w500,
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: (pct >= 0 ? const Color(0xFF22C55E) : const Color(0xFFEF4444)).withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${pct >= 0 ? '↑' : '↓'} ${pct.abs().toStringAsFixed(1)}% vs $prevLabel',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: pct >= 0 ? const Color(0xFF22C55E) : const Color(0xFFEF4444)),
                       ),
                     ),
                   ],
                 ],
               ),
             ),
-          ),
           const SizedBox(height: 20),
-          // Gráfica
           _buildChart(context),
-          // Glosario ¿Qué es?
           if (entry != null) ...[
             const SizedBox(height: 20),
             _buildDescriptionCard(context, entry),
@@ -363,7 +332,6 @@ class MetricDetailContent extends StatelessWidget {
         ),
       );
     }
-
     final dataMaxY = entries.map((e) => e.value).reduce((a, b) => a > b ? a : b);
     final minY = 0.0;
     final range = (dataMaxY - minY).clamp(0.01, double.infinity);
@@ -373,7 +341,6 @@ class MetricDetailContent extends StatelessWidget {
     final spots = entries.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.value)).toList();
     final cs = Theme.of(context).colorScheme;
     final glossEntry = getGlossaryEntry(metricId);
-
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -385,7 +352,7 @@ class MetricDetailContent extends StatelessWidget {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              const Color(0xFF5BA3E8).withValues(alpha: 0.12),
+              cs.primary.withValues(alpha: 0.12),
               cs.tertiary.withValues(alpha: 0.06),
             ],
           ),
@@ -401,10 +368,10 @@ class MetricDetailContent extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF5BA3E8).withValues(alpha: 0.2),
+                        color: cs.primary.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Icon(glossEntry.icon, color: const Color(0xFF5BA3E8), size: 20),
+                      child: Icon(glossEntry.icon, color: cs.primary, size: 20),
                     ),
                   const SizedBox(width: 10),
                   Text(
@@ -427,31 +394,22 @@ class MetricDetailContent extends StatelessWidget {
                         tooltipMargin: 8,
                         getTooltipItems: (touchedSpots) => touchedSpots.map((s) {
                           final i = s.x.toInt();
-                          final dateLabel = i >= 0 && i < entries.length
-                              ? (entries[i].key.length >= 10 ? entries[i].key.substring(0, 10) : entries[i].key)
-                              : '';
+                          final dateLabel = i >= 0 && i < entries.length ? (entries[i].key.length >= 10 ? entries[i].key.substring(0, 10) : entries[i].key) : '';
                           return LineTooltipItem(
                             '$dateLabel\n${_formatChartValue(s.y)}',
-                            TextStyle(
-                              color: Theme.of(context).colorScheme.onInverseSurface,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 12,
-                            ),
+                            TextStyle(color: cs.onInverseSurface, fontWeight: FontWeight.w600, fontSize: 12),
                           );
                         }).toList(),
                         tooltipBorderRadius: BorderRadius.circular(8),
                         tooltipPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        getTooltipColor: (_) => Theme.of(context).colorScheme.inverseSurface,
+                        getTooltipColor: (_) => cs.inverseSurface,
                       ),
                     ),
                     gridData: FlGridData(
                       show: true,
                       drawVerticalLine: false,
                       horizontalInterval: yInterval,
-                      getDrawingHorizontalLine: (v) => FlLine(
-                        color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
-                        strokeWidth: 1,
-                      ),
+                      getDrawingHorizontalLine: (v) => FlLine(color: Theme.of(context).dividerColor.withValues(alpha: 0.5), strokeWidth: 1),
                     ),
                     titlesData: FlTitlesData(
                       leftTitles: AxisTitles(
@@ -459,12 +417,7 @@ class MetricDetailContent extends StatelessWidget {
                           showTitles: true,
                           reservedSize: 52,
                           interval: yInterval,
-                          getTitlesWidget: (value, meta) => Text(
-                            _formatChartValue(value),
-                            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                            overflow: TextOverflow.clip,
-                            maxLines: 1,
-                          ),
+                          getTitlesWidget: (value, meta) => Text(_formatChartValue(value), style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant), overflow: TextOverflow.clip, maxLines: 1),
                         ),
                       ),
                       bottomTitles: AxisTitles(
@@ -476,15 +429,7 @@ class MetricDetailContent extends StatelessWidget {
                             final i = value.round();
                             if (i >= 0 && i < entries.length) {
                               final label = entries[i].key.length >= 10 ? entries[i].key.substring(5, 10) : entries[i].key;
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Text(
-                                  label,
-                                  style: TextStyle(fontSize: 9, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                                  overflow: TextOverflow.clip,
-                                  maxLines: 1,
-                                ),
-                              );
+                              return Padding(padding: const EdgeInsets.only(top: 8), child: Text(label, style: TextStyle(fontSize: 9, color: cs.onSurfaceVariant), overflow: TextOverflow.clip, maxLines: 1));
                             }
                             return const SizedBox();
                           },
@@ -499,19 +444,9 @@ class MetricDetailContent extends StatelessWidget {
                         spots: spots,
                         isCurved: false,
                         barWidth: 2.5,
-                        color: const Color(0xFF5BA3E8),
-                        dotData: FlDotData(
-                          show: spots.length <= 25,
-                          getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(
-                            radius: 3,
-                            color: const Color(0xFF5BA3E8),
-                            strokeWidth: 0,
-                          ),
-                        ),
-                        belowBarData: BarAreaData(
-                          show: true,
-                          color: const Color(0xFF5BA3E8).withValues(alpha: 0.12),
-                        ),
+                        color: cs.primary,
+                        dotData: FlDotData(show: false),
+                        belowBarData: BarAreaData(show: true, color: cs.primary.withValues(alpha: 0.12)),
                       ),
                     ],
                   ),
@@ -533,14 +468,7 @@ class MetricDetailContent extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              cs.tertiary.withValues(alpha: 0.08),
-              cs.primary.withValues(alpha: 0.05),
-            ],
-          ),
+          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [cs.tertiary.withValues(alpha: 0.08), cs.primary.withValues(alpha: 0.05)]),
         ),
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -551,27 +479,15 @@ class MetricDetailContent extends StatelessWidget {
                 children: [
                   Container(
                     padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: cs.tertiary.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(Icons.info_outline, color: cs.primary, size: 20),
+                    decoration: BoxDecoration(color: cs.tertiary.withValues(alpha: 0.25), borderRadius: BorderRadius.circular(8)),
+                    child: Icon(LucideIcons.info, color: cs.primary, size: 20),
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    AppStrings.t('what_is', LocaleNotifier.current),
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-                  ),
+                  Text(AppStrings.t('what_is', LocaleNotifier.current), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                 ],
               ),
               const SizedBox(height: 12),
-              Text(
-                getGlossaryDescription(entry.id, LocaleNotifier.current),
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  height: 1.5,
-                ),
-              ),
+              Text(getGlossaryDescription(entry.id, LocaleNotifier.current), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant, height: 1.5)),
             ],
           ),
         ),

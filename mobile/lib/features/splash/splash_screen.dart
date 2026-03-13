@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lucide_icons/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../core/error_utils.dart';
 import '../../core/iap/iap_service.dart';
 import '../../core/subscription/subscription_notifier.dart';
@@ -24,10 +27,17 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _resolveRoute() async {
     await SubscriptionNotifier.load();
     await IapService.init();
+    // Reset credenciales una sola vez (onboarding v2)
+    final prefs = await SharedPreferences.getInstance();
+    final resetDone = prefs.getBool(AppConstants.storageOnboardingV2Reset);
+    if (resetDone != true) {
+      await CredentialsRepository().clearAll();
+      await prefs.setBool(AppConstants.storageOnboardingV2Reset, true);
+    }
     final hasCredentials = await CredentialsRepository().hasCredentials();
     if (!mounted) return;
     if (!hasCredentials) {
-      context.go('/credentials');
+      context.go('/welcome');
       return;
     }
     final (valid, error) = await DashboardRepository().validateCredentialsWithError();
@@ -48,16 +58,14 @@ class _SplashScreenState extends State<SplashScreen> {
     context.go('/dashboard'); // otros errores: intentar en dashboard
   }
 
-  static const Color _splashBg = Color(0xFF000000);
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _splashBg,
+      backgroundColor: Colors.black,
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        color: _splashBg,
+        color: Colors.black,
         child: Center(
           child: Image.asset(
             'assets/icon/logo.png',
@@ -65,7 +73,7 @@ class _SplashScreenState extends State<SplashScreen> {
             width: 200,
             fit: BoxFit.contain,
             errorBuilder: (context, error, stackTrace) => Icon(
-              Icons.analytics_outlined,
+              LucideIcons.barChart2,
               size: 96,
               color: Theme.of(context).colorScheme.primary,
             ),

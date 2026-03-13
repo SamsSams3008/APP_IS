@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../core/iap/iap_service.dart';
 import '../../core/l10n/app_strings.dart';
@@ -69,7 +70,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
       appBar: AppBar(
         title: Text(AppStrings.t('tab_subscriptions', locale)),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(LucideIcons.arrowLeft),
           onPressed: () => context.pop(),
         ),
       ),
@@ -86,15 +87,30 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            Card(
-              color: cs.primaryContainer.withValues(alpha: 0.5),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Icon(Icons.check_circle, color: cs.primary, size: 28),
-                    const SizedBox(width: 12),
-                    Text(
+            Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? cs.primary.withValues(alpha: 0.18)
+                    : cs.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? cs.primary.withValues(alpha: 0.7)
+                      : cs.primary.withValues(alpha: 0.55),
+                  width: 2,
+                ),
+              ),
+              padding: const EdgeInsets.all(18),
+              child: Row(
+                children: [
+                  Icon(
+                    current == SubscriptionTier.pro ? LucideIcons.crown : LucideIcons.badgeCheck,
+                    color: cs.primary,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
                       current == SubscriptionTier.basic
                           ? AppStrings.t('tier_basic', locale)
                           : AppStrings.t('tier_pro', locale),
@@ -102,8 +118,8 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 24),
@@ -128,37 +144,23 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
               ],
               isCurrent: current == SubscriptionTier.pro,
               locale: locale,
+              leadingIcon: LucideIcons.crown,
             ),
             if (canBuy && current != SubscriptionTier.pro) ...[
               const SizedBox(height: 20),
-              FilledButton.icon(
+              FilledButton(
                 onPressed: _loading ? null : _buyPro,
-                icon: _loading ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary)) : const Icon(Icons.shopping_cart),
-                label: Text(AppStrings.t('buy_pro', locale)),
-                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                child: _loading
+                    ? SizedBox(height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
+                    : Text(AppStrings.t('buy_pro', locale), style: const TextStyle(fontSize: 16)),
               ),
             ],
             const SizedBox(height: 12),
             TextButton.icon(
               onPressed: _loading ? null : _restore,
-              icon: const Icon(Icons.restore),
+              icon: const Icon(LucideIcons.rotateCcw, size: 18),
               label: Text(AppStrings.t('restore_purchases', locale)),
-            ),
-            const SizedBox(height: 28),
-            Text(
-              AppStrings.t('how_to_buy', locale),
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: cs.onSurface,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              AppStrings.t('how_to_buy_hint', locale),
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: cs.onSurfaceVariant,
-                height: 1.45,
-              ),
             ),
           ],
         ),
@@ -174,6 +176,7 @@ class _PlanCard extends StatelessWidget {
     required this.bulletKeys,
     required this.isCurrent,
     required this.locale,
+    this.leadingIcon,
   });
 
   final String title;
@@ -181,6 +184,7 @@ class _PlanCard extends StatelessWidget {
   final List<String> bulletKeys;
   final bool isCurrent;
   final String locale;
+  final IconData? leadingIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -201,16 +205,22 @@ class _PlanCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: isCurrent ? cs.primary : cs.onSurface,
+                if (leadingIcon != null) ...[
+                  Icon(leadingIcon, size: 22, color: isCurrent ? cs.primary : cs.onSurfaceVariant),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: isCurrent ? cs.primary : cs.onSurface,
+                    ),
                   ),
                 ),
-                if (isCurrent) ...[
+                if (isCurrent && leadingIcon == null) ...[
                   const SizedBox(width: 8),
-                  Icon(Icons.check_circle, size: 20, color: cs.primary),
+                  Icon(LucideIcons.checkCircle, size: 20, color: cs.primary),
                 ],
               ],
             ),
@@ -230,7 +240,7 @@ class _PlanCard extends StatelessWidget {
                     children: [
                       Padding(
                         padding: const EdgeInsets.only(top: 6),
-                        child: Icon(Icons.check, size: 16, color: isCurrent ? cs.primary : cs.onSurfaceVariant),
+                        child: Icon(LucideIcons.check, size: 16, color: isCurrent ? cs.primary : cs.onSurfaceVariant),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
