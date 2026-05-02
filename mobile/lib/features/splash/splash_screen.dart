@@ -4,8 +4,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/error_utils.dart';
-import '../../core/iap/iap_service.dart';
-import '../../core/subscription/subscription_notifier.dart';
 import '../../../data/credentials/credentials_repository.dart';
 import '../dashboard/data/dashboard_repository.dart';
 
@@ -24,8 +22,7 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _resolveRoute() async {
-    await SubscriptionNotifier.load();
-    await IapService.init();
+    // Suscripción IAP: cargada en [main] antes de [runApp] (stream + prefs + restore).
     // Reset credenciales una sola vez (onboarding v2)
     final prefs = await SharedPreferences.getInstance();
     final resetDone = prefs.getBool(AppConstants.storageOnboardingV2Reset);

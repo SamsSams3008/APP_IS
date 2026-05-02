@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/iap/iap_service.dart';
 import 'core/locale_notifier.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
@@ -13,23 +14,33 @@ class App extends StatefulWidget {
   State<App> createState() => _AppState();
 }
 
-class _AppState extends State<App> {
+class _AppState extends State<App> with WidgetsBindingObserver {
   final ValueNotifier<bool> _transitionNotifier = ValueNotifier(false);
   late final GoRouter _router = AppRouter.createRouter();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     ThemeModeNotifier.valueNotifier.addListener(_onThemeChanged);
     LocaleNotifier.valueNotifier.addListener(_onLocaleChanged);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     LocaleNotifier.valueNotifier.removeListener(_onLocaleChanged);
     ThemeModeNotifier.valueNotifier.removeListener(_onThemeChanged);
     _transitionNotifier.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      IapService.refreshFromStore();
+    }
   }
 
   void _onThemeChanged() {
@@ -61,7 +72,7 @@ class _AppState extends State<App> {
             child ?? const SizedBox.shrink(),
             ValueListenableBuilder<bool>(
               valueListenable: _transitionNotifier,
-              builder: (_, transitioning, __) {
+              builder: (_, transitioning, _) {
                 if (!transitioning) return const SizedBox.shrink();
                 return _ThemeLocaleLoadingOverlay();
               },
